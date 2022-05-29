@@ -1708,7 +1708,7 @@ namespace unify_builder
             resetWorkDir();
 
             // new line
-            log("");
+            // log("");
 
             // try to enable VT100 console color
             if (OsInfo.instance().OsType == "win32")
@@ -1979,7 +1979,10 @@ namespace unify_builder
             {
                 Directory.CreateDirectory(outDir);
 
-                // add builder system env
+                // add appBase folder to system env
+                setEnvValue("PATH", appBaseDir);
+
+                // add builder root folder to system env
                 setEnvValue("PATH", builderDir +
                     Path.DirectorySeparatorChar + "msys" +
                     Path.DirectorySeparatorChar + "bin");
@@ -2149,8 +2152,7 @@ namespace unify_builder
                 }
 
                 // export compiler bin folder to PATH
-                string ccFolder = Path.GetDirectoryName(binDir + Path.DirectorySeparatorChar +
-                    cmdGen.getOriginalToolPath("c"));
+                string ccFolder = Path.GetDirectoryName(binDir + Path.DirectorySeparatorChar + cmdGen.getOriginalToolPath("c"));
                 setEnvValue("PATH", ccFolder);
 
                 // add env path for tasks
