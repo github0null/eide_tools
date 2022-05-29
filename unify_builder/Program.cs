@@ -3124,9 +3124,6 @@ namespace unify_builder
             BlockingCollection<CompilerLogData> ccLogQueue = new BlockingCollection<CompilerLogData>();
             Thread compilerLogger;
 
-            thrNum -= 1; // because logger used one thread
-            thrNum -= thrNum % 2; // make the amount of thread is an even number
-
             // print title
             info("start compilation (jobs: " + thrNum.ToString() + ") ...");
             if (cmds.Length > 0) log("");
