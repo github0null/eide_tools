@@ -821,6 +821,9 @@ namespace unify_builder
             string objSep = linkerModel.ContainsKey("$objPathSep")
                 ? linkerModel["$objPathSep"].Value<string>() : "\r\n";
 
+            bool checkEntryOrderForSdcc = linkerModel.ContainsKey("$mainFirst")
+                ? linkerModel["$mainFirst"].Value<bool>() : false;
+
             string lib_flags = getLinkerLibFlags();
 
             string outFileName = getOutName();
@@ -832,12 +835,12 @@ namespace unify_builder
             // For SDCC, bundled *.rel files as a *.lib file
             // ref: https://sourceforge.net/p/sdcc/discussion/1865/thread/e395ff7a42/#a03e
             // cmd: sdar -rcv ${out} ${in}
-            if (compilerId == "SDCC" && !cliTestMode)
+            if (!cliTestMode && compilerId == "SDCC" && checkEntryOrderForSdcc)
             {
                 List<string> finalObjsLi = new List<string>(128); // must be absolute path
                 List<string> bundledList = new List<string>(128); // must be relative path
 
-                // ignore entry source
+                // make entry src file at the first of cli args
                 {
                     string mainName = linkerParams.ContainsKey("$mainFileName")
                         ? linkerParams["$mainFileName"].Value<string>() : "main";
