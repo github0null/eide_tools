@@ -2974,6 +2974,9 @@ namespace unify_builder
                 .From(tableData)
                 .WithFormat(ConsoleTableBuilderFormat.Minimal)
                 .WithColumn("Segment", "Address", "Size", "Size(Decimal)")
+                .WithMinLength(new Dictionary<int, int> {
+                    { 0, 12 }, { 1, 12 }, { 2, 12 }, { 3, 12 }
+                })
                 .Export().ToString().Trim());
 
             mLog.AppendLine();
