@@ -1697,6 +1697,7 @@ namespace unify_builder
         static string projectRoot;
         static string builderDir;
         static string paramsFilePath;
+        static string refJsonName;
 
         static FileStream logStream = null;
 
@@ -1956,6 +1957,7 @@ namespace unify_builder
                 ram_max_size = paramsObj.ContainsKey("ram") ? paramsObj["ram"].Value<int>() : -1;
                 rom_max_size = paramsObj.ContainsKey("rom") ? paramsObj["rom"].Value<int>() : -1;
                 showRelativePathOnLog = paramsObj.ContainsKey("showRepathOnLog") ? paramsObj["showRepathOnLog"].Value<bool>() : false;
+                refJsonName = paramsObj.ContainsKey("sourceMapName") ? paramsObj["sourceMapName"].Value<string>() : "ref.json";
 
                 // init other params
                 ERR_LEVEL = compilerModel.ContainsKey("ERR_LEVEL") ? compilerModel["ERR_LEVEL"].Value<int>() : ERR_LEVEL;
@@ -2369,7 +2371,7 @@ namespace unify_builder
                 // save refs
                 try
                 {
-                    string refFilePath = outDir + Path.DirectorySeparatorChar + "ref.json";
+                    string refFilePath = outDir + Path.DirectorySeparatorChar + refJsonName;
                     File.WriteAllText(refFilePath, JsonConvert.SerializeObject(sourceRefs));
                 }
                 catch (Exception)
