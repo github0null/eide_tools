@@ -251,13 +251,13 @@ namespace unify_builder
 
         public class CmdInfo
         {
-            public string compilerType;
-            public string title;
-            public string exePath;
-            public string commandLine;
-            public string sourcePath;
-            public string outPath;
-            public Encoding outputEncoding;
+            public string compilerType;     // compiler type, like: 'c', 'asm', 'linker'
+            public string title;            // a title for this command, can be null
+            public string exePath;          // executable file full path
+            public string commandLine;      // executable file cli args
+            public string sourcePath;       // for compiler, value is '.c' path; for linker, value is output '.map' path
+            public string outPath;          // output file full path
+            public Encoding outputEncoding; // cli encoding, UTF8/GBK/...
         };
 
         public class LinkerExCmdInfo : CmdInfo
@@ -2478,9 +2478,9 @@ namespace unify_builder
                     foreach (var lib in libList)
                     {
                         if (lib.EndsWith(".lib") || lib.EndsWith(".a"))
-                            log(">> add lib '" + toHumanReadablePath(lib) + "'");
+                            log("add lib '" + toHumanReadablePath(lib) + "'");
                         else
-                            log(">> add obj '" + toHumanReadablePath(lib) + "'");
+                            log("add obj '" + toHumanReadablePath(lib) + "'");
                     }
                 }
 
@@ -2513,170 +2513,119 @@ namespace unify_builder
                             continue;
 
                         log("\r\n" + cmdOutput, false);
-
-                        /*
-                         * gcc-size example:
-                         * 
-                         * text    data     bss     dec     hex filename
-                         * 1320      12     304    1636     664 ./out/Release/stm32f103_gcc_quicksta
-                         */
-                        if (extraLinkerCmd.type == "gcc-size")
-                        {
-                            int RAM_SIZE = -1, ROM_SIZE = -1;
-
-                            Regex size_mather = new Regex(@"\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+", RegexOptions.IgnoreCase);
-
-                            foreach (string line in Regex.Split(cmdOutput, @"\r\n|\n"))
-                            {
-                                if (size_mather.IsMatch(line))
-                                {
-                                    Match match = size_mather.Match(line);
-
-                                    if (match.Success && match.Groups.Count > 4)
-                                    {
-                                        try
-                                        {
-                                            int text = int.Parse(match.Groups[1].Value);
-                                            int data = int.Parse(match.Groups[2].Value);
-                                            int bss_ = int.Parse(match.Groups[3].Value);
-
-                                            RAM_SIZE = data + bss_;
-                                            ROM_SIZE = data + text;
-                                        }
-                                        catch (Exception)
-                                        {
-                                            // do nothing
-                                        }
-
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (RAM_SIZE > 0 && ROM_SIZE > 0)
-                            {
-                                log("");
-
-                                if (ram_max_size > 0 && rom_max_size > 0) /* print progress */
-                                {
-                                    if (RAM_SIZE > 1024 || ROM_SIZE > 1024)
-                                    {
-                                        float ram_size_kb = RAM_SIZE / 1024.0f, ram_max_size_kb = ram_max_size / 1024.0f;
-                                        float rom_size_kb = ROM_SIZE / 1024.0f, rom_max_size_kb = rom_max_size / 1024.0f;
-
-                                        string ram_suffix = "\t" + ram_size_kb.ToString("f1") + "KB/" + ram_max_size_kb.ToString("f1") + "KB";
-                                        printProgress("   RAM: ", ram_size_kb / ram_max_size_kb, ram_suffix);
-
-                                        string rom_suffix = "\t" + rom_size_kb.ToString("f1") + "KB/" + rom_max_size_kb.ToString("f1") + "KB";
-                                        printProgress("   ROM: ", rom_size_kb / rom_max_size_kb, rom_suffix);
-                                    }
-                                    else
-                                    {
-                                        string ram_suffix = "\t" + RAM_SIZE.ToString() + "Byte/" + ram_max_size.ToString() + "Byte";
-                                        printProgress("   RAM: ", RAM_SIZE / ram_max_size, ram_suffix);
-
-                                        string rom_suffix = "\t" + ROM_SIZE.ToString() + "Byte/" + rom_max_size.ToString() + "Byte";
-                                        printProgress("   ROM: ", ROM_SIZE / rom_max_size, rom_suffix);
-                                    }
-                                }
-                                else /* only print size */
-                                {
-                                    if (RAM_SIZE > 1024 || ROM_SIZE > 1024)
-                                    {
-                                        float ram_size_kb = RAM_SIZE / 1024.0f;
-                                        float rom_size_kb = ROM_SIZE / 1024.0f;
-                                        log("   RAM: " + ram_size_kb.ToString("f1") + "\tKB");
-                                        log("   ROM: " + rom_size_kb.ToString("f1") + "\tKB");
-                                    }
-                                    else
-                                    {
-                                        log("   RAM: " + RAM_SIZE.ToString() + "\tByte");
-                                        log("   ROM: " + ROM_SIZE.ToString() + "\tByte");
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
 
                 // print map content by filter, calcu ram/rom usage
-                if (linkInfo.sourcePath != null && File.Exists(linkInfo.sourcePath))
+                string mapFileFullPath = linkInfo.sourcePath;
+                if (mapFileFullPath != null && File.Exists(mapFileFullPath))
                 {
                     try
                     {
-                        int ramSize = -1;
-                        int romSize = -1;
-                        bool hasPrintNewline = false;
+                        int ram_size;
+                        int rom_size;
+                        string mapLog;
 
-                        Regex ramReg = cmdGen.getRamSizeMatcher();
-                        Regex romReg = cmdGen.getRomSizeMatcher();
-                        Regex[] regList = cmdGen.getMapMatcher().ConvertAll((string reg) => {
-                            return new Regex(reg, RegexOptions.IgnoreCase | RegexOptions.Compiled);
-                        }).ToArray();
-
-                        foreach (string line in File.ReadAllLines(linkInfo.sourcePath))
+                        // parse map file
                         {
-                            if (Array.FindIndex(regList, (Regex reg) => { return reg.IsMatch(line); }) != -1)
+                            string ccID = cmdGen.getModelID().ToLower();
+
+                            switch (ccID)
                             {
-                                if (hasPrintNewline == false)
-                                {
-                                    log("");
-                                    hasPrintNewline = true;
-                                }
+                                case "sdcc":
+                                    parseMapFileForSdcc(mapFileFullPath,
+                                        out ram_size, out rom_size, out mapLog);
+                                    break;
+                                case "iar_stm8":
+                                    parseMapFileForIarStm8(mapFileFullPath,
+                                        out ram_size, out rom_size, out mapLog);
+                                    break;
+                                default:
+                                    parseMapFileForDef(mapFileFullPath, cmdGen,
+                                        out ram_size, out rom_size, out mapLog);
+                                    break;
+                            }
 
-                                log(line.Trim());
+                            if (ram_size == 0) ram_size = -1;
+                            if (rom_size == 0) rom_size = -1;
 
-                                if (ramSize == -1 && ramReg != null)
-                                {
-                                    Match matcher = ramReg.Match(line);
-                                    if (matcher.Success && matcher.Groups.Count > 1)
-                                    {
-                                        ramSize = int.Parse(matcher.Groups[1].Value);
-                                    }
-                                }
-
-                                if (romSize == -1 && romReg != null)
-                                {
-                                    Match matcher = romReg.Match(line);
-                                    if (matcher.Success && matcher.Groups.Count > 1)
-                                    {
-                                        romSize = int.Parse(matcher.Groups[1].Value);
-                                    }
-                                }
+                            if (!string.IsNullOrWhiteSpace(mapLog))
+                            {
+                                log("\r\n" + mapLog.TrimEnd());
                             }
                         }
 
-                        float sizeKb = 0.0f;
-                        float maxKb = 0.0f;
-
-                        if ((ramSize >= 0 && ram_max_size != -1) ||
-                            (romSize >= 0 && rom_max_size != -1))
+                        // log mem size
+                        if (ram_size >= 0 || rom_size >= 0)
                         {
                             log("");
 
-                            if (ramSize >= 0) // print RAM info
+                            if (ram_max_size > 0 && rom_max_size > 0)
                             {
-                                sizeKb = ramSize / 1024.0f;
-
-                                if (ram_max_size != -1)
+                                if (ram_size >= 0) // print RAM info
                                 {
-                                    maxKb = ram_max_size / 1024.0f;
-                                    string suffix = "\t" + sizeKb.ToString("f1") + "KB/" + maxKb.ToString("f1") + "KB";
-                                    printProgress("RAM  : ", (float)ramSize / ram_max_size, suffix);
+                                    if (ram_size > 1024)
+                                    {
+                                        float size_kb = ram_size / 1024.0f;
+                                        float max_kb = ram_max_size / 1024.0f;
+                                        string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
+                                        printProgress("RAM: ", (float)ram_size / ram_max_size, suffix);
+                                    }
+                                    else
+                                    {
+                                        string suffix = ram_size.ToString() + "B/" + ram_max_size.ToString() + "B";
+                                        printProgress("RAM: ", (float)ram_size / ram_max_size, suffix);
+                                    }
+                                }
+
+                                if (rom_size >= 0) // print ROM info
+                                {
+                                    if (rom_size > 1024)
+                                    {
+                                        float size_kb = rom_size / 1024.0f;
+                                        float max_kb = rom_max_size / 1024.0f;
+                                        string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
+                                        printProgress("ROM: ", (float)rom_size / rom_max_size, suffix);
+                                    }
+                                    else
+                                    {
+                                        string suffix = rom_size.ToString() + "B/" + rom_max_size.ToString() + "B";
+                                        printProgress("ROM: ", (float)rom_size / rom_max_size, suffix);
+                                    }
                                 }
                             }
 
-                            if (romSize >= 0) // print ROM info
+                            //
+                            // disabled, should implement in func: 'parseMapFileForXXX'
+                            //
+                            /*else
                             {
-                                sizeKb = romSize / 1024.0f;
-
-                                if (rom_max_size != -1)
+                                if (ram_size > 0)
                                 {
-                                    maxKb = rom_max_size / 1024.0f;
-                                    string suffix = "\t" + sizeKb.ToString("f1") + "KB/" + maxKb.ToString("f1") + "KB";
-                                    printProgress("FLASH: ", (float)romSize / rom_max_size, suffix);
+                                    if (ram_size > 1024)
+                                    {
+                                        float size_kb = ram_size / 1024.0f;
+                                        info("RAM: \t" + size_kb.ToString("f1") + " KB");
+                                    }
+                                    else
+                                    {
+                                        info("RAM: \t" + ram_size + " Bytes");
+                                    }
                                 }
-                            }
+
+                                if (rom_size > 0)
+                                {
+                                    if (rom_size > 1024)
+                                    {
+                                        float size_kb = rom_size / 1024.0f;
+                                        info("ROM: \t" + size_kb.ToString("f1") + " KB");
+                                    }
+                                    else
+                                    {
+                                        info("ROM: \t" + rom_size + " Bytes");
+                                    }
+                                }
+                            }*/
                         }
                     }
                     catch (Exception err)
@@ -2796,6 +2745,280 @@ namespace unify_builder
             return CODE_DONE;
         }
 
+        static void parseMapFileForIarStm8(string mapFileFullPath,
+            out int ramSize, out int romSize, out string maplog)
+        {
+            ramSize = 0;
+            romSize = 0;
+            maplog = null;
+
+            StringBuilder mLog = new StringBuilder();
+
+            // example:
+            // 1 610 bytes of readonly  code memory
+            //   136 bytes of readonly  data memory
+            //   774 bytes of readwrite data memory
+
+            List<string> strLi = new List<string>();
+
+            int ro_code_size = -1;
+            int ro_data_size = -1;
+            int rw_data_size = -1;
+
+            foreach (var line in File.ReadLines(mapFileFullPath))
+            {
+                var mRes = Regex.Match(line, @"^\s*([\d\s]+) bytes of (readonly|readwrite)\s+(code|data) memory");
+
+                if (mRes.Success && mRes.Groups.Count > 3)
+                {
+                    string memSize = mRes.Groups[1].Value.Replace(" ", "");
+                    string memType = mRes.Groups[2].Value + "_" + mRes.Groups[3].Value;
+
+                    switch (memType)
+                    {
+                        case "readonly_code":
+                            ro_code_size = int.Parse(memSize);
+                            break;
+                        case "readonly_data":
+                            ro_data_size = int.Parse(memSize);
+                            break;
+                        case "readwrite_data":
+                            rw_data_size = int.Parse(memSize);
+                            break;
+                        default:
+                            break;
+                    }
+
+                    strLi.Add(line);
+                }
+            }
+
+            if (ro_code_size >= 0 &&
+                ro_data_size >= 0 &&
+                rw_data_size >= 0)
+            {
+                ramSize = rw_data_size;
+                romSize = ro_code_size + ro_data_size;
+            }
+
+            int firstNonSpaceIdx = 0;
+
+            foreach (var item in strLi)
+            {
+                int idx = Array.FindIndex(item.ToCharArray(), (c) => {
+                    return c != ' ';
+                });
+
+                if (firstNonSpaceIdx == 0 || idx < firstNonSpaceIdx)
+                {
+                    firstNonSpaceIdx = idx;
+                }
+            }
+
+            foreach (var item in strLi)
+            {
+                mLog.AppendLine(item.Substring(firstNonSpaceIdx));
+            }
+
+            maplog = mLog.ToString();
+        }
+
+        struct SdccMapSectionDef
+        {
+            public string name;
+            public int addr;
+            public int size;
+        };
+
+        static void parseMapFileForSdcc(string mapFileFullPath,
+            out int ramSize, out int romSize, out string maplog)
+        {
+            ramSize = 0;
+            romSize = 0;
+            maplog = null;
+
+            StringBuilder mLog = new StringBuilder();
+
+            // if target is mcs51, use .mem file
+            string mcs51MemFilePath = Path.ChangeExtension(mapFileFullPath, ".mem");
+            if (mcs51MemFilePath != null && File.Exists(mcs51MemFilePath))
+            {
+                bool isMatched = false;
+
+                foreach (string line in File.ReadLines(mcs51MemFilePath))
+                {
+                    if (isMatched == false && (line.StartsWith("Stack starts") || line.StartsWith("Other memory:")))
+                        isMatched = true;
+
+                    if (isMatched) mLog.AppendLine(line);
+                }
+
+                maplog = mLog.ToString();
+                return;
+            }
+
+            Dictionary<string, SdccMapSectionDef> secList = new Dictionary<string, SdccMapSectionDef>();
+
+            //
+            // example line:
+            //
+            // Area Addr        Size Decimal Bytes(Attributes)
+            // -------------------------------        ----        ----        ------- ----- -------------
+            // GSFINAL                             0000005F    00000003 =           3. bytes (REL,CON,CODE)
+            //
+
+            const int SM_STATE_READY = 0;
+            const int SM_STATE_IN_AREA = 1;
+            const int SM_STATE_IN_AREA_INFO_LINE = 2;
+
+            int cur_state = SM_STATE_READY;
+
+            foreach (string line in File.ReadLines(mapFileFullPath))
+            {
+                switch (cur_state)
+                {
+                    case SM_STATE_READY:
+                        {
+                            if (line.TrimStart().StartsWith("Area"))
+                            {
+                                cur_state = SM_STATE_IN_AREA;
+                            }
+                        }
+                        break;
+                    case SM_STATE_IN_AREA:
+                        {
+                            if (line.TrimStart().StartsWith("Area"))
+                            {
+                                cur_state = SM_STATE_IN_AREA;
+                            }
+
+                            else if (line.TrimStart().StartsWith("----------"))
+                            {
+                                cur_state = SM_STATE_IN_AREA_INFO_LINE;
+                            }
+                            else
+                            {
+                                cur_state = SM_STATE_READY;
+                            }
+                        }
+                        break;
+                    case SM_STATE_IN_AREA_INFO_LINE:
+                        {
+                            var mRes = Regex.Match(line, @"^\s*([\w-]+)\s+([0-9a-f]+)\s+([0-9a-f]+)", RegexOptions.IgnoreCase);
+
+                            if (mRes.Success && mRes.Groups.Count > 3)
+                            {
+                                var secInf = new SdccMapSectionDef
+                                {
+                                    name = mRes.Groups[1].Value,
+                                    addr = int.Parse(mRes.Groups[2].Value, System.Globalization.NumberStyles.HexNumber),
+                                    size = int.Parse(mRes.Groups[3].Value, System.Globalization.NumberStyles.HexNumber),
+                                };
+
+                                secList.TryAdd(secInf.name, secInf);
+                            }
+
+                            cur_state = SM_STATE_READY;
+                        }
+                        break;
+                    default: // err state
+                        cur_state = SM_STATE_READY;
+                        break;
+                }
+            }
+
+            // calcu mem size
+            // ref: https://sourceforge.net/p/sdcc/discussion/1864/thread/f26b730d/?limit=25#c47f
+
+            string[] ramSegLi = { "DATA", "INITALIZED", "SSEG" };
+            string[] romSegLi = { "CODE", "CONST", "INITIALIZED", "GSINIT", "HOME", "GSFINAL" };
+
+            foreach (string name in ramSegLi)
+            {
+                if (secList.TryGetValue(name, out var secInfo))
+                {
+                    ramSize += secInfo.size;
+                }
+            }
+
+            foreach (string name in romSegLi)
+            {
+                if (secList.TryGetValue(name, out var secInfo))
+                {
+                    romSize += secInfo.size;
+                }
+            }
+
+            List<List<object>> tableData = new List<List<object>>();
+
+            foreach (var item in secList.Values)
+            {
+                tableData.Add(new List<object> {
+                    item.name,
+                    item.addr.ToString("X8"),
+                    item.size.ToString("X8"),
+                    item.size.ToString(),
+                });
+            }
+
+            mLog.AppendLine(ConsoleTableBuilder
+                .From(tableData)
+                .WithFormat(ConsoleTableBuilderFormat.Minimal)
+                .WithColumn("Segment", "Address", "Size", "Size(Decimal)")
+                .Export().ToString().Trim());
+
+            mLog.AppendLine();
+
+            mLog.AppendLine("RAM Total: " + ramSize + "\tBytes (" + string.Join(" + ", ramSegLi) + ")");
+            mLog.AppendLine("ROM Total: " + romSize + "\tBytes (" + string.Join(" + ", romSegLi) + ")");
+
+            maplog = mLog.ToString();
+        }
+
+        static void parseMapFileForDef(string mapFileFullPath, CmdGenerator cmdGen,
+            out int ramSize, out int romSize, out string maplog)
+        {
+            ramSize = -1;
+            romSize = -1;
+            maplog = null;
+
+            StringBuilder mLog = new StringBuilder();
+
+            Regex ramReg = cmdGen.getRamSizeMatcher();
+            Regex romReg = cmdGen.getRomSizeMatcher();
+            Regex[] regList = cmdGen.getMapMatcher().ConvertAll((string reg) => {
+                return new Regex(reg, RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            }).ToArray();
+
+            foreach (string line in File.ReadAllLines(mapFileFullPath))
+            {
+                if (Array.FindIndex(regList, (Regex reg) => { return reg.IsMatch(line); }) != -1)
+                {
+                    mLog.AppendLine(line.Trim());
+
+                    if (ramSize == -1 && ramReg != null)
+                    {
+                        Match matcher = ramReg.Match(line);
+                        if (matcher.Success && matcher.Groups.Count > 1)
+                        {
+                            ramSize = int.Parse(matcher.Groups[1].Value);
+                        }
+                    }
+
+                    if (romSize == -1 && romReg != null)
+                    {
+                        Match matcher = romReg.Match(line);
+                        if (matcher.Success && matcher.Groups.Count > 1)
+                        {
+                            romSize = int.Parse(matcher.Groups[1].Value);
+                        }
+                    }
+                }
+            }
+
+            maplog = mLog.ToString();
+        }
+
         static void printAppInfo()
         {
             string appName = Assembly.GetExecutingAssembly().GetName().Name;
@@ -2810,7 +3033,7 @@ namespace unify_builder
          */
         static string renderCompilerOutput(string output, bool isLinker = false)
         {
-            if (string.IsNullOrEmpty(output)) return ""; // is an empty line
+            if (string.IsNullOrWhiteSpace(output)) return ""; // is an empty line
 
             if (!colorRendererEnabled) return output + OsInfo.instance().CRLF;
 
@@ -2822,7 +3045,7 @@ namespace unify_builder
             int startIdx = 0;
             for (int i = 0; i < lines.Length; i++)
             {
-                if (!String.IsNullOrWhiteSpace(lines[i]))
+                if (!string.IsNullOrWhiteSpace(lines[i]))
                 {
                     startIdx = i;
                     break;
@@ -2833,7 +3056,7 @@ namespace unify_builder
             int endIdx;
             for (endIdx = lines.Length - 1; endIdx >= 0; endIdx--)
             {
-                if (!String.IsNullOrWhiteSpace(lines[endIdx]))
+                if (!string.IsNullOrWhiteSpace(lines[endIdx]))
                 {
                     break;
                 }
@@ -2846,7 +3069,7 @@ namespace unify_builder
             {
                 string line_ = lines[i];
 
-                if (String.IsNullOrWhiteSpace(line_))
+                if (string.IsNullOrWhiteSpace(line_))
                 {
                     ret.AppendLine(line_);
                     continue;
@@ -2887,7 +3110,7 @@ namespace unify_builder
                 sBuf[i] = '=';
             }
 
-            string res = label + "[" + new string(sBuf) + "] " + (progress * 100).ToString("f1") + "% " + suffix;
+            string res = label + "[" + new string(sBuf) + "] " + (progress * 100).ToString("f1") + "%\t  " + suffix;
 
             if (progress >= 1.0f)
             {
@@ -3196,7 +3419,7 @@ namespace unify_builder
                             string progressLog = ">> " + progressTag + " " + compilerTag + " '" + humanRdPath + "'";
                             Console.WriteLine(progressLog);
 
-                            if (!string.IsNullOrEmpty(logData.logTxt))
+                            if (!string.IsNullOrWhiteSpace(logData.logTxt))
                             {
                                 string rStr = renderCompilerOutput(logData.logTxt);
                                 Console.Write(rStr);
@@ -3603,7 +3826,7 @@ namespace unify_builder
 
                 foreach (string subLine in subLines)
                 {
-                    if (string.IsNullOrEmpty(subLine)) continue;
+                    if (string.IsNullOrWhiteSpace(subLine)) continue;
 
                     resultCnt++;
 
@@ -3633,7 +3856,7 @@ namespace unify_builder
                     string line = lines[i].Substring(sepIndex + 1)
                         .Replace("\\ ", " ").Replace("\\:", ":")
                         .Trim();
-                    if (string.IsNullOrEmpty(line)) continue;
+                    if (string.IsNullOrWhiteSpace(line)) continue;
                     resultList.Add(toAbsolutePath(line));
                 }
             }
