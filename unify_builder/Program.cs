@@ -834,8 +834,8 @@ namespace unify_builder
             // cmd: sdar -rcv ${out} ${in}
             if (compilerId == "SDCC" && !cliTestMode)
             {
-                List<string> realObjList = new List<string>(128);
-                List<string> bundledList = new List<string>(128);
+                List<string> finalObjsLi = new List<string>(128); // must be absolute path
+                List<string> bundledList = new List<string>(128); // must be relative path
 
                 // ignore entry source
                 {
@@ -848,7 +848,7 @@ namespace unify_builder
 
                     if (index != -1)
                     {
-                        realObjList.Add(toRelativePathForCompilerArgs(objList[index]));
+                        finalObjsLi.Add(objList[index]);
                         objList.RemoveAt(index);
                     }
                     else
@@ -863,7 +863,7 @@ namespace unify_builder
                 foreach (string objPath in objList)
                 {
                     if (objPath.EndsWith(".lib") || objPath.EndsWith(".a"))
-                        realObjList.Add(toRelativePathForCompilerArgs(objPath));
+                        finalObjsLi.Add(objPath);
                     else
                         bundledList.Add(toRelativePathForCompilerArgs(objPath));
                 }
@@ -886,10 +886,10 @@ namespace unify_builder
                     throw new Exception("bundled lib file failed, exit code: " + exitCode + ", msg: " + log);
 
                 // append to linker obj list
-                realObjList.Add(bundledOutPath);
+                finalObjsLi.Add(bundledFullOutPath);
 
                 // set real obj list
-                objList = realObjList;
+                objList = finalObjsLi;
             }
 
             //--
@@ -909,6 +909,11 @@ namespace unify_builder
                     cmdLine += sep + getCommandValue((JObject)linkerModel["$linkMap"], "")
                         .Replace("${mapPath}", toRelativePathForCompilerArgs(mapPath));
                 }
+            }
+
+            for (int i = 0; i < objList.Count; i++)
+            {
+                objList[i] = toRelativePathForCompilerArgs(objList[i]);
             }
 
             if (!cliTestMode)
