@@ -482,7 +482,7 @@ namespace unify_builder
             // parse from compiler
             try
             {
-                string exePath = option.bindirAbsPath + Path.DirectorySeparatorChar + getOriginalToolPath("c");
+                string exePath = option.bindirAbsPath + Path.DirectorySeparatorChar + getActivedRawToolPath("c");
                 JObject vMatcher = this.getToolchainVersionMatcher();
 
                 if (vMatcher != null)
@@ -802,12 +802,12 @@ namespace unify_builder
                 ? getCommandValue((JObject)linkerModel["$LIB_FLAGS"], Utility.getJObjectVal(linkerParams["LIB_FLAGS"])) : "";
         }
 
-        public CmdInfo genLinkCommand(List<string> objList, bool onlyCmd = false)
+        public CmdInfo genLinkCommand(List<string> objList, bool cliTestMode = false)
         {
             JObject linkerModel = models["linker"];
             JObject linkerParams = paramObj["linker"];
             InvokeFormat iFormat = invokeFormats["linker"];
-            string sep = (iFormat.useFile && onlyCmd == false) ? "\r\n" : " ";
+            string sep = (iFormat.useFile && !cliTestMode) ? "\r\n" : " ";
 
             string outSuffix = linkerModel.ContainsKey("$outputSuffix")
                 ? linkerModel["$outputSuffix"].Value<string>() : ".axf";
@@ -821,12 +821,76 @@ namespace unify_builder
             string objSep = linkerModel.ContainsKey("$objPathSep")
                 ? linkerModel["$objPathSep"].Value<string>() : "\r\n";
 
-            bool mainFirst = linkerModel.ContainsKey("$mainFirst")
-                ? linkerModel["$mainFirst"].Value<bool>() : false;
-
             string lib_flags = getLinkerLibFlags();
 
             string outFileName = getOutName();
+
+            string compilerId = getModelID();
+
+            //--
+
+            // For SDCC, bundled *.rel files as a *.lib file
+            // ref: https://sourceforge.net/p/sdcc/discussion/1865/thread/e395ff7a42/#a03e
+            // cmd: sdar -rcv ${out} ${in}
+            if (compilerId == "SDCC" && !cliTestMode)
+            {
+                List<string> realObjList = new List<string>(128);
+                List<string> bundledList = new List<string>(128);
+
+                // ignore entry source
+                {
+                    string mainName = linkerParams.ContainsKey("$mainFileName")
+                        ? linkerParams["$mainFileName"].Value<string>() : "main";
+
+                    int index = objList.FindIndex((string fName) => {
+                        return Path.GetFileNameWithoutExtension(fName).Equals(mainName);
+                    });
+
+                    if (index != -1)
+                    {
+                        realObjList.Add(toRelativePathForCompilerArgs(objList[index]));
+                        objList.RemoveAt(index);
+                    }
+                    else
+                    {
+                        throw new Exception("Not found '"
+                            + mainName + ".rel' object file in output list, the '"
+                            + mainName + ".rel' object file must be the first object file !");
+                    }
+                }
+
+                // split objs
+                foreach (string objPath in objList)
+                {
+                    if (objPath.EndsWith(".lib") || objPath.EndsWith(".a"))
+                        realObjList.Add(toRelativePathForCompilerArgs(objPath));
+                    else
+                        bundledList.Add(toRelativePathForCompilerArgs(objPath));
+                }
+
+                string bundledFullOutPath = outDir + Path.DirectorySeparatorChar + "no_entry_bundled.lib";
+                string bundledOutPath = toRelativePathForCompilerArgs(bundledFullOutPath);
+
+                string cliStr = "-rc ${out} ${in}"
+                    .Replace("${out}", bundledOutPath)
+                    .Replace("${in}", string.Join(" ", bundledList));
+
+                // dump cli args for user
+                string cliArgsPath = Path.ChangeExtension(bundledFullOutPath, ".args.txt");
+                if (string.IsNullOrEmpty(cliArgsPath)) throw new Exception("cannot generate '.args.txt' for: " + bundledFullOutPath);
+                File.WriteAllText(cliArgsPath, cliStr, encodings["linker"]);
+
+                // make bundled lib
+                int exitCode = Program.runExe(getToolFullPathByModel("linker-lib"), cliStr, out string log);
+                if (exitCode != Program.CODE_DONE)
+                    throw new Exception("bundled lib file failed, exit code: " + exitCode + ", msg: " + log);
+
+                // append to linker obj list
+                realObjList.Add(bundledOutPath);
+
+                // set real obj list
+                objList = realObjList;
+            }
 
             //--
 
@@ -847,35 +911,7 @@ namespace unify_builder
                 }
             }
 
-            if (mainFirst && onlyCmd == false)
-            {
-                string mainName = linkerParams.ContainsKey("$mainFileName")
-                    ? linkerParams["$mainFileName"].Value<string>() : "main";
-
-                int index = objList.FindIndex((string fName) => {
-                    return Path.GetFileNameWithoutExtension(fName).Equals(mainName);
-                });
-
-                if (index != -1)
-                {
-                    string name = objList[index];
-                    objList.RemoveAt(index);
-                    objList.Insert(0, name);
-                }
-                else
-                {
-                    throw new Exception("Not found '"
-                        + mainName + ".rel' object file in output list, the '"
-                        + mainName + ".rel' object file must be the first object file !");
-                }
-            }
-
-            for (int i = 0; i < objList.Count; i++)
-            {
-                objList[i] = toRelativePathForCompilerArgs(objList[i]);
-            }
-
-            if (onlyCmd == false)
+            if (!cliTestMode)
             {
                 cmdLine += sep + linkerModel["$output"].Value<string>()
                     .Replace("${out}", toRelativePathForCompilerArgs(outPath))
@@ -907,7 +943,7 @@ namespace unify_builder
 
             string commandLine = null;
 
-            if (iFormat.useFile && onlyCmd == false)
+            if (iFormat.useFile && !cliTestMode)
             {
                 FileInfo paramFile = new FileInfo(outName + ".lnp");
                 File.WriteAllText(paramFile.FullName, cmdLine, encodings["linker"]);
@@ -950,7 +986,7 @@ namespace unify_builder
             return new CmdInfo
             {
                 compilerType = "linker",
-                exePath = getToolPath("linker"),
+                exePath = getToolFullPathById("linker"),
                 commandLine = commandLine,
                 sourcePath = mapPath,
                 outPath = outPath,
@@ -988,7 +1024,7 @@ namespace unify_builder
                 commandsList.Add(new CmdInfo
                 {
                     title = outputModel["name"].Value<string>(),
-                    exePath = getToolPathByRePath(outputModel["toolPath"].Value<string>()),
+                    exePath = toAbsToolPath(outputModel["toolPath"].Value<string>()),
                     commandLine = command,
                     sourcePath = linkerOutputFile,
                     outPath = outFilePath,
@@ -1010,7 +1046,7 @@ namespace unify_builder
 
             foreach (JObject model in (JArray)linkerModel["$extraCommand"])
             {
-                string exePath = getToolPathByRePath(model["toolPath"].Value<string>());
+                string exePath = toAbsToolPath(model["toolPath"].Value<string>());
 
                 string command = compilerAttr_commandPrefix + model["command"].Value<string>()
                     .Replace("${linkerOutput}", toRelativePathForCompilerArgs(linkerOutputFile));
@@ -1037,19 +1073,25 @@ namespace unify_builder
             return parameters.ContainsKey("name") ? parameters["name"].Value<string>() : "main";
         }
 
-        private string getToolPathByRePath(string rePath)
+        private string toAbsToolPath(string rawToolPath)
         {
-            return binDir + rePath.Replace("${toolPrefix}", toolPrefix);
+            return binDir +
+                rawToolPath.Replace("${toolPrefix}", toolPrefix);
         }
 
-        public string getToolPath(string name)
+        public string getToolFullPathById(string id)
         {
-            return binDir + getOriginalToolPath(name);
+            return binDir + getActivedRawToolPath(id);
         }
 
-        public string getOriginalToolPath(string name)
+        public string getActivedRawToolPath(string name)
         {
             return models[name]["$path"].Value<string>();
+        }
+
+        public string getToolFullPathByModel(string name)
+        {
+            return toAbsToolPath(model["groups"][name]["$path"].Value<string>());
         }
 
         public string getModelName()
@@ -1320,7 +1362,7 @@ namespace unify_builder
             return new CmdInfo
             {
                 compilerType = modelName,
-                exePath = getToolPath(modelName),
+                exePath = getToolFullPathById(modelName),
                 commandLine = commandLines,
                 sourcePath = fpath,
                 outPath = outPath,
@@ -1562,7 +1604,7 @@ namespace unify_builder
                     // if macro is '', skip
                     if (string.IsNullOrWhiteSpace(macro)) continue;
 
-                    string macroStr = null;
+                    string macroStr;
 
                     if (modelName == "asm")
                     {
@@ -1593,7 +1635,6 @@ namespace unify_builder
             }
 
             List<string> cmds = new List<string>();
-            JObject cmpModel = models[modelName];
             CmdFormat incFormat = formats[modelName]["$libs"];
 
             foreach (var libDirPath in libList)
@@ -2152,7 +2193,7 @@ namespace unify_builder
                 }
 
                 // export compiler bin folder to PATH
-                string ccFolder = Path.GetDirectoryName(binDir + Path.DirectorySeparatorChar + cmdGen.getOriginalToolPath("c"));
+                string ccFolder = Path.GetDirectoryName(binDir + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("c"));
                 setEnvValue("PATH", ccFolder);
 
                 // add env path for tasks
@@ -2186,7 +2227,7 @@ namespace unify_builder
                     warn("\r\nASM command line (" + Path.GetFileNameWithoutExtension(cmdInf.exePath) + "): \r\n");
                     log(cmdInf.commandLine);
 
-                    cmdInf = cmdGen.genLinkCommand(new List<string> { "${obj}" }, true);
+                    cmdInf = cmdGen.genLinkCommand(new List<string> { "${obj1}", "${obj2}" }, true);
                     warn("\r\nLinker command line (" + Path.GetFileNameWithoutExtension(cmdInf.exePath) + "): \r\n");
                     log(cmdInf.commandLine);
 
@@ -2228,7 +2269,7 @@ namespace unify_builder
                 {
                     if (cList.Count > 0)
                     {
-                        string absPath = replaceEnvVariable(cmdGen.getToolPath("c"));
+                        string absPath = replaceEnvVariable(cmdGen.getToolFullPathById("c"));
 
                         if (!File.Exists(absPath))
                         {
@@ -2238,7 +2279,7 @@ namespace unify_builder
 
                     if (cppList.Count > 0)
                     {
-                        string absPath = replaceEnvVariable(cmdGen.getToolPath("cpp"));
+                        string absPath = replaceEnvVariable(cmdGen.getToolFullPathById("cpp"));
 
                         if (!File.Exists(absPath))
                         {
@@ -2248,7 +2289,7 @@ namespace unify_builder
 
                     if (asmList.Count > 0)
                     {
-                        string absPath = replaceEnvVariable(cmdGen.getToolPath("asm"));
+                        string absPath = replaceEnvVariable(cmdGen.getToolFullPathById("asm"));
 
                         if (!File.Exists(absPath))
                         {
@@ -2257,7 +2298,7 @@ namespace unify_builder
                     }
 
                     {
-                        string absPath = replaceEnvVariable(cmdGen.getToolPath("linker"));
+                        string absPath = replaceEnvVariable(cmdGen.getToolFullPathById("linker"));
 
                         if (!File.Exists(absPath))
                         {
@@ -2430,17 +2471,20 @@ namespace unify_builder
                 infoWithLable("", false);
                 info("start linking ...");
 
-                CmdGenerator.CmdInfo linkInfo = cmdGen.genLinkCommand(linkerFiles);
-
                 if (libList.Count > 0)
                 {
                     log("");
 
                     foreach (var lib in libList)
                     {
-                        log(">> linking '" + toHumanReadablePath(lib) + "'");
+                        if (lib.EndsWith(".lib") || lib.EndsWith(".a"))
+                            log(">> add lib '" + toHumanReadablePath(lib) + "'");
+                        else
+                            log(">> add obj '" + toHumanReadablePath(lib) + "'");
                     }
                 }
+
+                CmdGenerator.CmdInfo linkInfo = cmdGen.genLinkCommand(linkerFiles);
 
                 int linkerExitCode = runExe(linkInfo.exePath, linkInfo.commandLine, out string linkerOut, linkInfo.outputEncoding);
 
