@@ -2898,7 +2898,6 @@ namespace unify_builder
                             {
                                 cur_state = SM_STATE_IN_AREA;
                             }
-
                             else if (line.TrimStart().StartsWith("----------"))
                             {
                                 cur_state = SM_STATE_IN_AREA_INFO_LINE;
