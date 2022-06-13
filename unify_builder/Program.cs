@@ -883,6 +883,9 @@ namespace unify_builder
                 if (string.IsNullOrEmpty(cliArgsPath)) throw new Exception("cannot generate '.args.txt' for: " + bundledFullOutPath);
                 File.WriteAllText(cliArgsPath, cliStr, encodings["linker"]);
 
+                // del old .lib file
+                if (File.Exists(bundledFullOutPath)) File.Delete(bundledFullOutPath);
+
                 // make bundled lib
                 int exitCode = Program.runExe(getToolFullPathByModel("linker-lib"), cliStr, out string log);
                 if (exitCode != Program.CODE_DONE)
@@ -2566,76 +2569,42 @@ namespace unify_builder
                         }
 
                         // log mem size
-                        if (ram_size >= 0 || rom_size >= 0)
+                        if ((ram_size >= 0 || rom_size >= 0) &&
+                            (ram_max_size > 0 && rom_max_size > 0))
                         {
                             log("");
 
-                            if (ram_max_size > 0 && rom_max_size > 0)
+                            if (ram_size >= 0) // print ram usage
                             {
-                                if (ram_size >= 0) // print RAM info
+                                if (ram_size > 1024)
                                 {
-                                    if (ram_size > 1024)
-                                    {
-                                        float size_kb = ram_size / 1024.0f;
-                                        float max_kb = ram_max_size / 1024.0f;
-                                        string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
-                                        printProgress("RAM: ", (float)ram_size / ram_max_size, suffix);
-                                    }
-                                    else
-                                    {
-                                        string suffix = ram_size.ToString() + "B/" + ram_max_size.ToString() + "B";
-                                        printProgress("RAM: ", (float)ram_size / ram_max_size, suffix);
-                                    }
+                                    float size_kb = ram_size / 1024.0f;
+                                    float max_kb = ram_max_size / 1024.0f;
+                                    string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
+                                    printProgress("RAM: ", (float)ram_size / ram_max_size, suffix);
                                 }
-
-                                if (rom_size >= 0) // print ROM info
+                                else
                                 {
-                                    if (rom_size > 1024)
-                                    {
-                                        float size_kb = rom_size / 1024.0f;
-                                        float max_kb = rom_max_size / 1024.0f;
-                                        string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
-                                        printProgress("ROM: ", (float)rom_size / rom_max_size, suffix);
-                                    }
-                                    else
-                                    {
-                                        string suffix = rom_size.ToString() + "B/" + rom_max_size.ToString() + "B";
-                                        printProgress("ROM: ", (float)rom_size / rom_max_size, suffix);
-                                    }
+                                    string suffix = ram_size.ToString() + "B/" + ram_max_size.ToString() + "B";
+                                    printProgress("RAM: ", (float)ram_size / ram_max_size, suffix);
                                 }
                             }
 
-                            //
-                            // disabled, should implement in func: 'parseMapFileForXXX'
-                            //
-                            /*else
+                            if (rom_size >= 0) // print rom usage
                             {
-                                if (ram_size > 0)
+                                if (rom_size > 1024)
                                 {
-                                    if (ram_size > 1024)
-                                    {
-                                        float size_kb = ram_size / 1024.0f;
-                                        info("RAM: \t" + size_kb.ToString("f1") + " KB");
-                                    }
-                                    else
-                                    {
-                                        info("RAM: \t" + ram_size + " Bytes");
-                                    }
+                                    float size_kb = rom_size / 1024.0f;
+                                    float max_kb = rom_max_size / 1024.0f;
+                                    string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
+                                    printProgress("ROM: ", (float)rom_size / rom_max_size, suffix);
                                 }
-
-                                if (rom_size > 0)
+                                else
                                 {
-                                    if (rom_size > 1024)
-                                    {
-                                        float size_kb = rom_size / 1024.0f;
-                                        info("ROM: \t" + size_kb.ToString("f1") + " KB");
-                                    }
-                                    else
-                                    {
-                                        info("ROM: \t" + rom_size + " Bytes");
-                                    }
+                                    string suffix = rom_size.ToString() + "B/" + rom_max_size.ToString() + "B";
+                                    printProgress("ROM: ", (float)rom_size / rom_max_size, suffix);
                                 }
-                            }*/
+                            }
                         }
                     }
                     catch (Exception err)
@@ -2981,8 +2950,13 @@ namespace unify_builder
 
             mLog.AppendLine();
 
-            mLog.AppendLine("RAM Total: " + ramSize + "\tBytes (" + string.Join(" + ", ramSegLi) + ")");
-            mLog.AppendLine("ROM Total: " + romSize + "\tBytes (" + string.Join(" + ", romSegLi) + ")");
+            int maxPadWidth = (ramSize > romSize ? ramSize : romSize).ToString().Length;
+
+            mLog.AppendLine("RAM Total: "
+                + ramSize.ToString().PadRight(maxPadWidth) + " Bytes (" + string.Join(" + ", ramSegLi) + ")");
+
+            mLog.AppendLine("ROM Total: "
+                + romSize.ToString().PadRight(maxPadWidth) + " Bytes (" + string.Join(" + ", romSegLi) + ")");
 
             maplog = mLog.ToString();
         }
@@ -3108,33 +3082,36 @@ namespace unify_builder
 
         static void printProgress(string label, float progress, string suffix = "")
         {
-            int num = (int)(progress * 10.0f + 0.45f);
-            num = num > 10 ? 10 : num;
-            char[] sBuf = new char[10];
+            const int BAR_MAX_LEN = 20;
+            char[] barTxt = new char[BAR_MAX_LEN];
 
-            for (int i = 0; i < 10; i++)
+            // fill progress bar
             {
-                sBuf[i] = ' ';
+                int num = (int)((progress * BAR_MAX_LEN) + 0.45f);
+                num = num > BAR_MAX_LEN ? BAR_MAX_LEN : num;
+
+                for (int i = 0; i < BAR_MAX_LEN; i++)
+                    barTxt[i] = ' ';
+
+                for (int i = 0; i < num; i++)
+                    barTxt[i] = '#';
             }
 
-            for (int i = 0; i < num; i++)
-            {
-                sBuf[i] = '=';
-            }
-
-            string res = label + "[" + new string(sBuf) + "] " + (progress * 100).ToString("f1") + "%\t  " + suffix;
+            string progTxt = label + "[" + new string(barTxt) + "] "
+                + ((progress * 100).ToString("f1") + "%").PadRight(8 + 3)
+                + (" " + suffix);
 
             if (progress >= 1.0f)
             {
-                error(res);
+                error(progTxt);
             }
             else if (progress >= 0.95f)
             {
-                warn(res);
+                warn(progTxt);
             }
             else
             {
-                info(res);
+                info(progTxt);
             }
         }
 
