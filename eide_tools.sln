@@ -15,6 +15,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "serial_monitor", "serial_mo
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "axf2elf", "axf2elf\axf2elf.csproj", "{923698D3-7FE0-469F-BEA3-4BC5F4DE61D2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "c_source_splitter", "c_source_splitter\c_source_splitter.csproj", "{7C1E5129-5484-4914-8244-6B5E5694FBCB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,6 +35,10 @@ Global
 		{923698D3-7FE0-469F-BEA3-4BC5F4DE61D2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{923698D3-7FE0-469F-BEA3-4BC5F4DE61D2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{923698D3-7FE0-469F-BEA3-4BC5F4DE61D2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7C1E5129-5484-4914-8244-6B5E5694FBCB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7C1E5129-5484-4914-8244-6B5E5694FBCB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7C1E5129-5484-4914-8244-6B5E5694FBCB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7C1E5129-5484-4914-8244-6B5E5694FBCB}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
