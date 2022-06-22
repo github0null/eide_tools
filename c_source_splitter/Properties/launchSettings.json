@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "c_source_splitter": {
-      "commandName": "Project",
-      "commandLineArgs": "-t sdcc -d \"C:\\Users\\Administrator\\Desktop\\stm8s-test\\APP\\EIDE\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_clk.c\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_exti.c\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_flash.c\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_gpio.c\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_itc.c\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_iwdg.c\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_rst.c\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_spi.c\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_tim2.c\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_tim4.c\" \"build/Debug/__/__/Libraries/STM8S_StdPeriph_Driver/src/stm8s_wwdg.c\" \"build/Debug/__/main.c\" \"build/Debug/__/src/APP_PassiveSwitch.c\" \"build/Debug/__/src/Hal_Flash.c\" \"build/Debug/__/src/Hal_IWDG.c\" \"build/Debug/__/src/Hal_Key.c\" \"build/Debug/__/src/Hal_LED.c\" \"build/Debug/__/src/Hal_Relay.c\" \"build/Debug/__/src/Hal_SWDelay.c\" \"build/Debug/__/src/Hal_TIM.c\" \"build/Debug/__/src/Mod_ID.c\" \"build/Debug/__/src/Mod_IDFlash.c\" \"build/Debug/__/src/Mod_Misc.c\" \"build/Debug/__/src/Mod_SWTimer.c\" \"build/Debug/__/src/Process.c\" \"build/Debug/__/src/StateMachine.c\" \"build/Debug/__/src/rf/Mod_RfFifoArray.c\" \"build/Debug/__/src/rf/Mod_Telegram.c\" \"build/Debug/__/src/rf/cc11xL/Hal_CC11xL.c\" \"build/Debug/__/stm8s_it.c\""
-    }
-  }
-}

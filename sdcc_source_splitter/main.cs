@@ -237,11 +237,14 @@ namespace c_source_splitter
     {
         public class Options
         {
-            [Option('t', Required = true, HelpText = "toolchain name")]
+            [Option('c', Required = true, HelpText = "compiler id")]
             public string toolchainSelected { get; set; }
 
             [Option('d', Required = true, HelpText = "current work folder")]
             public string workFolder { get; set; }
+
+            [Option("test", Required = false, HelpText = "current work folder")]
+            public bool onlyTestSourceFile { get; set; }
 
             [Value(0, Min = 1, Required = true, HelpText = "preprocessed source files")]
             public IEnumerable<string> inputSrcFiles { get; set; }
@@ -281,12 +284,28 @@ namespace c_source_splitter
                     throw new Exception(string.Format("We not support this toolchain: '{0}'", cliOptions.toolchainSelected));
 
                 // handle files
+
+                List<SourceFunctionsInfo> funcInfoLi = new List<SourceFunctionsInfo>();
+
                 foreach (var filePath in cliOptions.inputSrcFiles)
                 {
                     if (gCsrcFileFilter.IsMatch(filePath))
                     {
-                        parseSdccSourceFile(filePath);
+                        funcInfoLi.Add(parseSdccSourceFile(filePath));
                     }
+                }
+
+                // if not exception, parse done
+                if (cliOptions.onlyTestSourceFile)
+                {
+                    log("ok !");
+                    return CODE_DONE;
+                }
+
+                // split and generate files
+                foreach (var item in funcInfoLi)
+                {
+                    splitAndGenerateFiles(item);
                 }
             }
             catch (Exception err)
@@ -298,20 +317,41 @@ namespace c_source_splitter
             return CODE_DONE;
         }
 
-        private static void parseSdccSourceFile(string srcPath)
+        private static void splitAndGenerateFiles(SourceFunctionsInfo info_)
+        {
+            string baseName = Path.GetFileName(info_.srcFilePath);
+            string outDirPath = Path.GetDirectoryName(info_.srcFilePath) + Path.DirectorySeparatorChar + baseName + ".split";
+
+            // clean old files
+            if (Directory.Exists(outDirPath)) { Directory.Delete(outDirPath, true); }
+            Directory.CreateDirectory(outDirPath);
+
+            // 
+            string[] srcTxtLines = File.ReadAllLines(info_.srcFilePath);
+
+            // 
+            foreach (var item in info_.srcFuncList)
+            {
+
+            }
+        }
+
+        private static SourceFunctionsInfo parseSdccSourceFile(string srcPath)
         {
             ICharStream input = CharStreams.fromStream(new FileStream(srcPath, FileMode.Open, FileAccess.Read));
             CodeListener cListener = new CodeListener(srcPath, input);
 
-            CLexer lexer = new CLexer(input);
+            SdccLexer lexer = new SdccLexer(input);
             lexer.AddErrorListener(cListener);
 
-            CParser parser = new CParser(new CommonTokenStream(lexer));
+            SdccParser parser = new SdccParser(new CommonTokenStream(lexer));
             parser.AddErrorListener(cListener);
             parser.AddParseListener(cListener);
             var ctx = parser.compilationUnit();
 
             if (ctx.exception != null) throw ctx.exception;
+
+            return cListener.SourceFuncInfoResult;
         }
 
         public static void log(string line, bool newLine = true)
@@ -321,21 +361,48 @@ namespace c_source_splitter
         }
     }
 
-    class CodeListener : CBaseListener, IAntlrErrorListener<int>, IAntlrErrorListener<IToken>
+    struct SourceFunctionsInfoItem
     {
-        private ICharStream input;
+        public IToken startLocation;
+        public IToken stopLocation;
+    }
+
+    struct SourceFunctionsInfo
+    {
+        public string srcFilePath;
+        public ICharStream srcFileStream;
+        public SourceFunctionsInfoItem[] srcFuncList;
+    }
+
+    class CodeListener : SdccBaseListener, IAntlrErrorListener<int>, IAntlrErrorListener<IToken>
+    {
         private string srcFileName;
+        private SourceFunctionsInfo _srcFuncInfoRes;
+        private List<SourceFunctionsInfoItem> _funcInfoItems = new List<SourceFunctionsInfoItem>();
 
         public CodeListener(string srcFileName, ICharStream input)
         {
             this.srcFileName = srcFileName;
-            this.input = input;
+            _srcFuncInfoRes.srcFilePath = srcFileName;
+            _srcFuncInfoRes.srcFileStream = input;
+            _srcFuncInfoRes.srcFuncList = null;
         }
 
-        public override void ExitFunctionDefinition([NotNull] CParser.FunctionDefinitionContext context)
+        public SourceFunctionsInfo SourceFuncInfoResult
         {
-            //Program.log("\n---");
-            //Program.log(input.GetText(Interval.Of(context.Start.StartIndex, context.Stop.StopIndex)));
+            get {
+                _srcFuncInfoRes.srcFuncList = _funcInfoItems.ToArray();
+                return _srcFuncInfoRes;
+            }
+        }
+
+        public override void ExitFunctionDefinition([NotNull] SdccParser.FunctionDefinitionContext context)
+        {
+            _funcInfoItems.Add(new SourceFunctionsInfoItem
+            {
+                startLocation = context.Start,
+                stopLocation = context.Stop,
+            });
         }
 
         public void SyntaxError(TextWriter output, IRecognizer recognizer, int offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
