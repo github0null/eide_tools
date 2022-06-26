@@ -251,13 +251,14 @@ namespace unify_builder
 
         public class CmdInfo
         {
-            public string compilerType;     // compiler type, like: 'c', 'asm', 'linker'
-            public string title;            // a title for this command, can be null
-            public string exePath;          // executable file full path
-            public string commandLine;      // executable file cli args
-            public string sourcePath;       // for compiler, value is '.c' path; for linker, value is output '.map' path
-            public string outPath;          // output file full path
-            public Encoding outputEncoding; // cli encoding, UTF8/GBK/...
+            public string compilerType;     // [required] compiler type, like: 'c', 'asm', 'linker'
+            public string title;            // [optional] a title for this command
+            public string exePath;          // [required] executable file full path
+            public string commandLine;      // [required] executable file cli args
+            public string shellCommand;     // [optional] shell command which will be invoke compiler, used to gen 'compile_commands.json'
+            public string sourcePath;       // [required] for compiler, value is '.c' path; for linker, value is output '.map' path
+            public string outPath;          // [required] output file full path
+            public Encoding outputEncoding; // [required] cli encoding, UTF8/GBK/...
         };
 
         public class LinkerExCmdInfo : CmdInfo
@@ -311,7 +312,7 @@ namespace unify_builder
         private readonly bool outDirTree;  // whether generate a tree struct in build folder
 
         private readonly string outDir; // output root folder
-        private readonly string binDir; // compiler tool folder
+        private readonly string binDir; // compiler root folder, like: 'c:\compiler_root', '/bin/gcc_root', '%COMPILER_ROOT%'
         private readonly string cwd;    // project root folder
 
         private readonly string compilerAttr_commandPrefix;      // the compiler options prefix
@@ -1349,19 +1350,28 @@ namespace unify_builder
             // delete whitespace
             commands.RemoveAll(delegate (string _command) { return string.IsNullOrEmpty(_command); });
 
+            // repleace eide cmd vars and system envs
+            {
+                string reOutDir = toRelativePathForCompilerArgs(outDir, false, false);
+                string reSrcDir = toRelativePathForCompilerArgs(srcDir, false, false);
+
+                for (int i = 0; i < commands.Count; i++)
+                {
+                    commands[i] = commands[i]
+                        .Replace("${OutName}", reOutDir + compilerAttr_directorySeparator + formatPathForCompilerArgs(outFileName))
+                        .Replace("${OutDir}", reOutDir)
+                        .Replace("${FileName}", reSrcDir + compilerAttr_directorySeparator + srcName)
+                        .Replace("${FileDir}", reSrcDir);
+
+                    commands[i] = Program.replaceEnvVariable(commands[i]);
+                }
+            }
+
             string commandLines = compilerAttr_commandPrefix + string.Join(" ", commands.ToArray());
 
-            // repleace eide cmd vars
-            string reOutDir = toRelativePathForCompilerArgs(outDir, false, false);
-            string reSrcDir = toRelativePathForCompilerArgs(srcDir, false, false);
-            commandLines = commandLines
-               .Replace("${OutName}", reOutDir + compilerAttr_directorySeparator + formatPathForCompilerArgs(outFileName))
-               .Replace("${OutDir}", reOutDir)
-               .Replace("${FileName}", reSrcDir + compilerAttr_directorySeparator + srcName)
-               .Replace("${FileDir}", reSrcDir);
-
-            // replace system env
-            commandLines = Program.replaceEnvVariable(commandLines);
+            // create cli args for 'compile_commands.json'
+            string exeFullPath = getToolFullPathById(modelName);
+            string shellCmd = "\"" + Program.replaceEnvVariable(exeFullPath) + "\" " + commandLines;
 
             if (iFormat.useFile && onlyCmd == false)
             {
@@ -1373,8 +1383,9 @@ namespace unify_builder
             return new CmdInfo
             {
                 compilerType = modelName,
-                exePath = getToolFullPathById(modelName),
+                exePath = exeFullPath,
                 commandLine = commandLines,
+                shellCommand = shellCmd,
                 sourcePath = fpath,
                 outPath = outPath,
                 outputEncoding = encodings[modelName]
@@ -1724,6 +1735,36 @@ namespace unify_builder
             FAST,
             DEBUG,
             MULTHREAD
+        }
+
+        struct CompileCommandsDataBaseItem
+        {
+            // The working directory of the compilation.
+            // All paths specified in the command or file fields must be either absolute or relative to this directory.
+            public string directory;
+
+            // The main translation unit source processed by this compilation step.
+            // This is used by tools as the key into the compilation database.
+            // There can be multiple command objects for the same file,
+            // for example if the same source file is compiled with different configurations.
+            public string file;
+
+            // The compile command argv as list of strings.
+            // This should run the compilation step for the translation unit file.
+            // arguments[0] should be the executable name, such as clang++.
+            // Arguments should not be escaped, but ready to pass to execvp().
+            //public string[] arguments;
+
+            // The compile command as a single shell-escaped string.
+            // Arguments may be shell quoted and escaped following platform
+            // conventions, with ‘"’ and ‘\’ being the only special characters.
+            // Shell expansion is not supported.
+            public string command;
+
+            // The name of the output created by this compilation step.
+            // This field is optional.
+            // It can be used to distinguish different processing modes of the same input file.
+            //public string output;
         }
 
         /**
@@ -2339,16 +2380,24 @@ namespace unify_builder
                 // print toolchain name and version
                 infoWithLable(cmdGen.compilerFullName + "\r\n", true, "TOOL");
 
-                // get all source ref
-                Dictionary<string, string> sourceRefs = new Dictionary<string, string>();
+                // some compiler database informations
+                Dictionary<string, string> sourceRefs = new();
+                List<CompileCommandsDataBaseItem> compilerArgsDataBase = new(256);
 
                 foreach (var cFile in cList)
                 {
                     CmdGenerator.CmdInfo cmdInf = cmdGen.fromCFile(cFile);
                     linkerFiles.Add(cmdInf.outPath);
                     commands.Add(cmdInf.sourcePath, cmdInf);
-                    sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
                     cCount++;
+
+                    sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
+                    compilerArgsDataBase.Add(new CompileCommandsDataBaseItem
+                    {
+                        file = cmdInf.sourcePath,
+                        directory = projectRoot,
+                        command = cmdInf.shellCommand
+                    });
                 }
 
                 foreach (var asmFile in asmList)
@@ -2356,8 +2405,15 @@ namespace unify_builder
                     CmdGenerator.CmdInfo cmdInf = cmdGen.fromAsmFile(asmFile);
                     linkerFiles.Add(cmdInf.outPath);
                     commands.Add(cmdInf.sourcePath, cmdInf);
-                    sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
                     asmCount++;
+
+                    sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
+                    compilerArgsDataBase.Add(new CompileCommandsDataBaseItem
+                    {
+                        file = cmdInf.sourcePath,
+                        directory = projectRoot,
+                        command = cmdInf.shellCommand
+                    });
                 }
 
                 foreach (var cppFile in cppList)
@@ -2365,8 +2421,15 @@ namespace unify_builder
                     CmdGenerator.CmdInfo cmdInf = cmdGen.fromCppFile(cppFile);
                     linkerFiles.Add(cmdInf.outPath);
                     commands.Add(cmdInf.sourcePath, cmdInf);
-                    sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
                     cppCount++;
+
+                    sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
+                    compilerArgsDataBase.Add(new CompileCommandsDataBaseItem
+                    {
+                        file = cmdInf.sourcePath,
+                        directory = projectRoot,
+                        command = cmdInf.shellCommand
+                    });
                 }
 
                 foreach (var libFile in libList)
@@ -2379,11 +2442,15 @@ namespace unify_builder
                     throw new Exception("Not found any source files !, please add some source files !");
                 }
 
-                // save refs
+                // save compiler database informations
                 try
                 {
                     string refFilePath = outDir + Path.DirectorySeparatorChar + refJsonName;
-                    File.WriteAllText(refFilePath, JsonConvert.SerializeObject(sourceRefs));
+                    File.WriteAllText(refFilePath, JsonConvert.SerializeObject(sourceRefs), RuntimeEncoding.instance().UTF8);
+
+                    string compilerDbPath = outDir + Path.DirectorySeparatorChar + "compile_commands.json";
+                    CompileCommandsDataBaseItem[] iLi = compilerArgsDataBase.ToArray();
+                    File.WriteAllText(compilerDbPath, JsonConvert.SerializeObject(iLi), RuntimeEncoding.instance().UTF8);
                 }
                 catch (Exception)
                 {
@@ -2909,7 +2976,7 @@ namespace unify_builder
             // ref: https://sourceforge.net/p/sdcc/discussion/1864/thread/f26b730d/?limit=25#c47f
 
             string[] ramSegLi = { "DATA", "INITALIZED", "SSEG" };
-            string[] romSegLi = { "CODE", "CONST", "INITIALIZED", "GSINIT", "HOME", "GSFINAL" };
+            string[] romSegLi = { "CODE", "CONST", "INITIALIZER", "GSINIT", "HOME", "GSFINAL" };
 
             foreach (string name in ramSegLi)
             {
