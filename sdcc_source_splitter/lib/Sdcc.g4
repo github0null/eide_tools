@@ -191,6 +191,7 @@ storageClassSpecifier
 
 typeSpecifier
     :   ('void'
+    |   '__bit' | '__sbit' | '__sfr' | '__sfr16' | '__sfr32' // for 8051 dat type
     |   'char'
     |   'short'
     |   'int'
@@ -327,7 +328,6 @@ gccAttributeSpecifier
     |   ('__interrupt' | '__using' | '__at') '(' Constant ')'
     |   ('__wparam' | '__shadowregs') // for pic
     |   ('__data' | '__idata' | '__pdata' | '__xdata' | '__code' | '__far' | '__near') // for 8051 mem type
-    |   ('__bit' | '__sbit' | '__sfr' | '__sfr16' | '__sfr32')                         // for 8051 dat type
     ;
 
 gccAttributeList

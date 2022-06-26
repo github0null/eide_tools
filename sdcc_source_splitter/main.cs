@@ -285,13 +285,13 @@ namespace c_source_splitter
 
                 // handle files
 
-                List<SourceFunctionsInfo> funcInfoLi = new List<SourceFunctionsInfo>();
+                List<SourceContext> srcContextLi = new();
 
                 foreach (var filePath in cliOptions.inputSrcFiles)
                 {
                     if (gCsrcFileFilter.IsMatch(filePath))
                     {
-                        funcInfoLi.Add(parseSdccSourceFile(filePath));
+                        srcContextLi.Add(parseSdccSourceFile(filePath));
                     }
                 }
 
@@ -303,7 +303,7 @@ namespace c_source_splitter
                 }
 
                 // split and generate files
-                foreach (var item in funcInfoLi)
+                foreach (var item in srcContextLi)
                 {
                     splitAndGenerateFiles(item);
                 }
@@ -317,7 +317,7 @@ namespace c_source_splitter
             return CODE_DONE;
         }
 
-        private static void splitAndGenerateFiles(SourceFunctionsInfo info_)
+        private static void splitAndGenerateFiles(SourceContext info_)
         {
             string baseName = Path.GetFileName(info_.srcFilePath);
             string outDirPath = Path.GetDirectoryName(info_.srcFilePath) + Path.DirectorySeparatorChar + baseName + ".split";
@@ -330,13 +330,9 @@ namespace c_source_splitter
             string[] srcTxtLines = File.ReadAllLines(info_.srcFilePath);
 
             // 
-            foreach (var item in info_.srcFuncList)
-            {
-
-            }
         }
 
-        private static SourceFunctionsInfo parseSdccSourceFile(string srcPath)
+        private static SourceContext parseSdccSourceFile(string srcPath)
         {
             ICharStream input = CharStreams.fromStream(new FileStream(srcPath, FileMode.Open, FileAccess.Read));
             CodeListener cListener = new CodeListener(srcPath, input);
@@ -351,7 +347,7 @@ namespace c_source_splitter
 
             if (ctx.exception != null) throw ctx.exception;
 
-            return cListener.SourceFuncInfoResult;
+            return cListener.SourceContext;
         }
 
         public static void log(string line, bool newLine = true)
@@ -359,60 +355,302 @@ namespace c_source_splitter
             if (newLine) Console.WriteLine(line);
             else Console.Write(line);
         }
+
+        public static void debug(string line, bool newLine = true)
+        {
+            if (newLine) Console.WriteLine(line);
+            else Console.Write(line);
+        }
     }
 
-    struct SourceFunctionsInfoItem
+    enum SymbolType
     {
+        Variable,
+        Function,
+    }
+
+    class SourceSymbol
+    {
+        public string name;
+        public SymbolType type;
+        public string[] attrs;
+        public string[] refers;
+
         public IToken startLocation;
         public IToken stopLocation;
+
+        public bool IsStatic()
+        {
+            return attrs.Contains("static");
+        }
+
+        public bool Equal(SourceSymbol sym)
+        {
+            return sym.name == name && sym.type == type;
+        }
     }
 
-    struct SourceFunctionsInfo
+    class SourceContext
     {
         public string srcFilePath;
         public ICharStream srcFileStream;
-        public SourceFunctionsInfoItem[] srcFuncList;
+        public List<SourceSymbol> symbols = new(256);
     }
 
     class CodeListener : SdccBaseListener, IAntlrErrorListener<int>, IAntlrErrorListener<IToken>
     {
-        private string srcFileName;
-        private SourceFunctionsInfo _srcFuncInfoRes;
-        private List<SourceFunctionsInfoItem> _funcInfoItems = new List<SourceFunctionsInfoItem>();
+        private SourceContext sourceContext;
 
         public CodeListener(string srcFileName, ICharStream input)
         {
-            this.srcFileName = srcFileName;
-            _srcFuncInfoRes.srcFilePath = srcFileName;
-            _srcFuncInfoRes.srcFileStream = input;
-            _srcFuncInfoRes.srcFuncList = null;
+            sourceContext = new SourceContext
+            {
+                srcFilePath = srcFileName,
+                srcFileStream = input
+            };
+
+            stack.Push(ParserStatus.InGlobal);
         }
 
-        public SourceFunctionsInfo SourceFuncInfoResult
+        public SourceContext SourceContext
         {
             get {
-                _srcFuncInfoRes.srcFuncList = _funcInfoItems.ToArray();
-                return _srcFuncInfoRes;
+                return sourceContext;
             }
+        }
+
+        //
+        // interval vars
+        //
+
+        enum ParserStatus
+        {
+            InGlobal,
+            InFunctionDefine,
+            InDeclaration,
+            InStatement
+        }
+
+        private Stack<ParserStatus> stack = new(10);
+
+        public override void EnterDeclaration([NotNull] SdccParser.DeclarationContext context)
+        {
+            stack.Push(ParserStatus.InDeclaration);
+        }
+
+        public override void ExitDeclaration([NotNull] SdccParser.DeclarationContext context)
+        {
+            if (stack.Pop() != ParserStatus.InDeclaration)
+            {
+                throw new Exception("Internal State Error");
+            }
+
+            // parse global vars
+            if (stack.Peek() == ParserStatus.InGlobal)
+            {
+                List<string> vAttrList = new();
+                List<string> vNameList = new();
+                List<string> vRefeList = new();
+
+                var declSpec = context.declarationSpecifiers();
+
+                if (declSpec == null)
+                    return; // skip other declare type
+
+                foreach (var declaration in declSpec.declarationSpecifier())
+                {
+                    // Store Class
+                    {
+                        var spec = declaration.storageClassSpecifier();
+
+                        if (spec != null)
+                        {
+                            var text = spec.GetText();
+
+                            if (text != "typedef")
+                            {
+                                vAttrList.Add(text);
+                            }
+                        }
+                    }
+
+                    // Qualifier
+                    {
+                        var spec = declaration.typeQualifier();
+                        if (spec != null)
+                        {
+                            vAttrList.Add(spec.GetText());
+                        }
+                    }
+
+                    // skip some type
+                    {
+                        var spec = declaration.typeSpecifier();
+                        if (spec != null)
+                        {
+                            var structSpec = spec.structOrUnionSpecifier();
+                            var enumSpec = spec.enumSpecifier();
+
+                            if (structSpec != null && structSpec.structDeclarationList() != null)
+                            {
+                                // it's a struct type declare, skip it
+                                return;
+                            }
+
+                            else if (enumSpec != null && enumSpec.enumeratorList() != null)
+                            {
+                                // it's a enum type declare, skip it
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                var initDeclCtx = context.initDeclaratorList();
+
+                if (initDeclCtx == null)
+                    return; // it's not a var declare, skip
+
+                foreach (var item in initDeclCtx.initDeclarator())
+                {
+                    var decl = item.declarator().directDeclarator();
+
+                    if (decl.LeftParen() != null && decl.RightParen() != null)
+                        continue; // it's a function decl, skip
+
+                    var initializerCtx = item.initializer();
+
+                    if (initializerCtx != null) // parse var references
+                    {
+                        var baseExprLi = FindChild<SdccParser.PrimaryExpressionContext>(initializerCtx);
+
+                        foreach (var exprCtx in baseExprLi)
+                        {
+                            var idf = exprCtx.Identifier();
+
+                            if (idf != null)
+                            {
+                                vRefeList.Add(idf.GetText());
+                            }
+                        }
+                    }
+
+                    vNameList.Add(GetIdentifierFromDirectDeclarator(decl).GetText());
+                }
+
+                if (vNameList.Count > 0)
+                {
+                    foreach (var name in vNameList)
+                    {
+                        sourceContext.symbols.Add(new SourceSymbol
+                        {
+                            name = name,
+                            type = SymbolType.Variable,
+                            attrs = vAttrList.ToArray(),
+                            refers = vRefeList.ToArray(),
+                            startLocation = context.Start,
+                            stopLocation = context.Stop
+                        });
+                    }
+                }
+            }
+        }
+
+        private static T[] FindChild<T>(ParserRuleContext rootCtx) where T : ParserRuleContext
+        {
+            List<T> result = new();
+
+            Stack<ParserRuleContext> ctxStack = new();
+
+            ctxStack.Push(rootCtx);
+
+            while (ctxStack.Count > 0)
+            {
+                var ctx = ctxStack.Pop();
+
+                if (ctx is T t)
+                {
+                    result.Add(t);
+                }
+
+                if (ctx.ChildCount > 0)
+                {
+                    foreach (var child in ctx.children)
+                    {
+                        if (child is ParserRuleContext c)
+                        {
+                            ctxStack.Push(c);
+                        }
+                    }
+                }
+            }
+
+            return result.ToArray();
+        }
+
+        private ITerminalNode GetIdentifierFromDirectDeclarator(SdccParser.DirectDeclaratorContext ctx)
+        {
+            if (ctx.Identifier() != null)
+            {
+                return ctx.Identifier();
+            }
+
+            else if (ctx.declarator() != null)
+            {
+                return GetIdentifierFromDirectDeclarator(ctx.declarator().directDeclarator());
+            }
+
+            else if (ctx.directDeclarator() != null)
+            {
+                return GetIdentifierFromDirectDeclarator(ctx.directDeclarator());
+            }
+
+            else
+            {
+                throw new Exception("Internal Error In: 'getIdentifierFromDirectDeclarator'");
+            }
+        }
+
+        public override void EnterStatement([NotNull] SdccParser.StatementContext context)
+        {
+            stack.Push(ParserStatus.InStatement);
+        }
+
+        public override void ExitStatement([NotNull] SdccParser.StatementContext context)
+        {
+            Program.debug(string.Format("[Statement]: {0}",
+                sourceContext.srcFileStream.GetText(Interval.Of(context.Start.StartIndex, context.Stop.StartIndex))));
+
+            if (stack.Pop() != ParserStatus.InStatement)
+            {
+                throw new Exception("Internal State Error");
+            }
+        }
+
+        public override void EnterFunctionDefinition([NotNull] SdccParser.FunctionDefinitionContext context)
+        {
+            stack.Push(ParserStatus.InFunctionDefine);
         }
 
         public override void ExitFunctionDefinition([NotNull] SdccParser.FunctionDefinitionContext context)
         {
-            _funcInfoItems.Add(new SourceFunctionsInfoItem
+            Program.debug(string.Format("[end] [FunctionDefinition]: {0}",
+                sourceContext.srcFileStream.GetText(Interval.Of(context.Start.StartIndex, context.Stop.StartIndex))));
+
+            if (stack.Pop() != ParserStatus.InFunctionDefine)
             {
-                startLocation = context.Start,
-                stopLocation = context.Stop,
-            });
+                throw new Exception("Internal State Error");
+            }
         }
 
         public void SyntaxError(TextWriter output, IRecognizer recognizer, int offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
         {
-            throw new Exception(string.Format("\"{0}\":{1},{2}: LexerError: {3}", srcFileName, line, charPositionInLine, msg));
+            throw new Exception(string.Format("\"{0}\":{1},{2}: LexerError: {3}", sourceContext.srcFilePath, line, charPositionInLine, msg));
         }
 
         public void SyntaxError(TextWriter output, IRecognizer recognizer, IToken offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
         {
-            throw new Exception(string.Format("\"{0}\":{1},{2}: SyntaxError: {3}", srcFileName, line, charPositionInLine, msg));
+            throw new Exception(string.Format("\"{0}\":{1},{2}: SyntaxError: {3}", sourceContext.srcFilePath, line, charPositionInLine, msg));
         }
     }
 }
