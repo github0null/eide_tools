@@ -371,6 +371,10 @@ namespace c_source_splitter
 
     class SourceSymbol
     {
+        public static string TYPE_NAME_UNKOWN = "<unkown-type>";
+
+        // ---
+
         public string name;
         public SymbolType symType;
         public string typeName;
@@ -458,138 +462,146 @@ namespace c_source_splitter
             // parse global vars
             if (stack.Peek() == ParserStatus.InGlobal)
             {
-                string vTypeName = null;
+                var symLi = ParseVariableDeclare(context);
+                sourceContext.symbols.AddRange(symLi);
+            }
+        }
 
-                List<string> vAttrList = new();
-                List<string> vNameList = new();
+        private static SourceSymbol[] ParseVariableDeclare([NotNull] SdccParser.DeclarationContext context) 
+        {
+            List<SourceSymbol> symList = new();
 
-                Dictionary<string, List<string>> vRefsMap = new();
+            string vTypeName = null;
+            List<string> vAttrList = new();
+            List<string> vNameList = new();
+            Dictionary<string, List<string>> vRefsMap = new();
 
-                // ---
+            // ---
 
-                var declSpec = context.declarationSpecifiers();
+            var declSpec = context.declarationSpecifiers();
 
-                if (declSpec == null)
-                    return; // skip other declare type
+            if (declSpec == null)
+                return symList.ToArray(); // skip other declare type
 
-                foreach (var declaration in declSpec.declarationSpecifier())
+            foreach (var declaration in declSpec.declarationSpecifier())
+            {
+                // type name
                 {
-                    // type name
-                    {
-                        var typeDecl = declaration.typeSpecifier();
+                    var typeDecl = declaration.typeSpecifier();
 
-                        if (typeDecl != null)
-                        {
-                            vTypeName = typeDecl.GetText();
-                        }
+                    if (typeDecl != null)
+                    {
+                        vTypeName = typeDecl.GetText();
                     }
+                }
 
-                    // Store Class
+                // Store Class
+                {
+                    var spec = declaration.storageClassSpecifier();
+
+                    if (spec != null)
                     {
-                        var spec = declaration.storageClassSpecifier();
+                        var text = spec.GetText();
 
-                        if (spec != null)
+                        if (text != "typedef")
                         {
-                            var text = spec.GetText();
-
-                            if (text != "typedef")
-                            {
-                                vAttrList.Add(text);
-                            }
-                        }
-                    }
-
-                    // Qualifier
-                    {
-                        var spec = declaration.typeQualifier();
-
-                        if (spec != null)
-                        {
-                            vAttrList.Add(spec.GetText());
-                        }
-                    }
-
-                    // skip some type
-                    {
-                        var spec = declaration.typeSpecifier();
-
-                        if (spec != null)
-                        {
-                            var structSpec = spec.structOrUnionSpecifier();
-
-                            if (structSpec != null && structSpec.structDeclarationList() != null)
-                            {
-                                // it's a struct type declare, skip it
-                                return;
-                            }
-
-                            var enumSpec = spec.enumSpecifier();
-
-                            if (enumSpec != null && enumSpec.enumeratorList() != null)
-                            {
-                                // it's a enum type declare, skip it
-                                return;
-                            }
+                            vAttrList.Add(text);
                         }
                     }
                 }
 
-                var initDeclCtx = context.initDeclaratorList();
-
-                if (initDeclCtx == null)
-                    return; // it's not a var declare, skip
-
-                if (vTypeName == null)
-                    vTypeName = "<null>";
-
-                foreach (var item in initDeclCtx.initDeclarator())
+                // Qualifier
                 {
-                    var decl = item.declarator().directDeclarator();
+                    var spec = declaration.typeQualifier();
 
-                    if (decl.LeftParen() != null && decl.RightParen() != null)
-                        continue; // it's a function decl, skip
-
-                    var vName = GetIdentifierFromDirectDeclarator(decl).GetText();
-
-                    vNameList.Add(vName);
-
-                    if (vRefsMap.ContainsKey(vName) == false)
-                        vRefsMap.Add(vName, new());
-
-                    var initializerCtx = item.initializer();
-
-                    if (initializerCtx != null) // parse var references
+                    if (spec != null)
                     {
-                        var baseExprLi = FindChild<SdccParser.PrimaryExpressionContext>(initializerCtx);
-
-                        foreach (var exprCtx in baseExprLi)
-                        {
-                            var idf = exprCtx.Identifier();
-
-                            if (idf != null)
-                            {
-                                vRefsMap[vName].Add(idf.GetText());
-                            }
-                        }
+                        vAttrList.Add(spec.GetText());
                     }
                 }
 
-                if (vNameList.Count > 0)
+                // skip some type
                 {
-                    foreach (var name in vNameList)
+                    var spec = declaration.typeSpecifier();
+
+                    if (spec != null)
                     {
-                        sourceContext.symbols.Add(new SourceSymbol {
-                            name = name,
-                            symType = SymbolType.Variable,
-                            typeName = vTypeName,
-                            attrs = vAttrList.ToArray(),
-                            refers = vRefsMap[name].ToArray(),
-                            startLocation = context.Start,
-                            stopLocation = context.Stop
-                        });
+                        var structSpec = spec.structOrUnionSpecifier();
+
+                        if (structSpec != null && structSpec.structDeclarationList() != null)
+                        {
+                            // it's a struct type declare, skip it
+                            return symList.ToArray();
+                        }
+
+                        var enumSpec = spec.enumSpecifier();
+
+                        if (enumSpec != null && enumSpec.enumeratorList() != null)
+                        {
+                            // it's a enum type declare, skip it
+                            return symList.ToArray();
+                        }
                     }
                 }
             }
+
+            var initDeclCtx = context.initDeclaratorList();
+
+            if (initDeclCtx == null)
+                return symList.ToArray(); // it's not a var declare, skip
+
+            if (vTypeName == null)
+                vTypeName = SourceSymbol.TYPE_NAME_UNKOWN;
+
+            foreach (var item in initDeclCtx.initDeclarator())
+            {
+                var decl = item.declarator().directDeclarator();
+
+                if (decl.LeftParen() != null && decl.RightParen() != null)
+                    continue; // it's a function decl, skip
+
+                var vName = GetIdentifierFromDirectDeclarator(decl).GetText();
+
+                vNameList.Add(vName);
+
+                if (vRefsMap.ContainsKey(vName) == false)
+                    vRefsMap.Add(vName, new());
+
+                var initializerCtx = item.initializer();
+
+                if (initializerCtx != null) // parse var references
+                {
+                    var baseExprLi = FindChild<SdccParser.PrimaryExpressionContext>(initializerCtx);
+
+                    foreach (var exprCtx in baseExprLi)
+                    {
+                        var idf = exprCtx.Identifier();
+
+                        if (idf != null)
+                        {
+                            vRefsMap[vName].Add(idf.GetText());
+                        }
+                    }
+                }
+            }
+
+            if (vNameList.Count > 0)
+            {
+                foreach (var name in vNameList)
+                {
+                    symList.Add(new SourceSymbol {
+                        name = name,
+                        symType = SymbolType.Variable,
+                        typeName = vTypeName,
+                        attrs = vAttrList.ToArray(),
+                        refers = vRefsMap[name].ToArray(),
+                        startLocation = context.Start,
+                        stopLocation = context.Stop
+                    });
+                }
+            }
+
+            return symList.ToArray();
         }
 
         private static T[] FindChild<T>(ParserRuleContext rootCtx) where T : ParserRuleContext
@@ -655,7 +667,7 @@ namespace c_source_splitter
             }
         }
 
-        private ITerminalNode GetIdentifierFromDirectDeclarator(SdccParser.DirectDeclaratorContext ctx)
+        private static ITerminalNode GetIdentifierFromDirectDeclarator(SdccParser.DirectDeclaratorContext ctx)
         {
             if (ctx.Identifier() != null)
             {
@@ -785,7 +797,7 @@ namespace c_source_splitter
             sourceContext.symbols.Add(new SourceSymbol {
                 name = vFuncName,
                 symType = SymbolType.Function,
-                typeName = "<null>",
+                typeName = SourceSymbol.TYPE_NAME_UNKOWN,
                 attrs = vAttrList.ToArray(),
                 refers = vRefeList.ToArray(),
                 startLocation = context.Start,
