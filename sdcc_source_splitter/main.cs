@@ -256,11 +256,8 @@ namespace c_source_splitter
         public static readonly int CODE_ERR = 1;
         public static readonly int CODE_DONE = 0;
 
-        // file filters
-        static readonly Regex gCsrcFileFilter = new Regex(@"\.c$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        // supported list
-        static readonly string[] gSupportedToolLi = { "sdcc" };
+        static readonly Regex gCsrcFileFilter = new(@"\.c$", RegexOptions.IgnoreCase | RegexOptions.Compiled); // file filters
+        static readonly string[] gSupportedToolLi = { "sdcc" }; // supported list
 
         //
         // global vars
@@ -284,65 +281,118 @@ namespace c_source_splitter
                     throw new Exception(string.Format("We not support this toolchain: '{0}'", cliOptions.toolchainSelected));
 
                 // handle files
-
-                List<SourceContext> srcContextLi = new();
-
                 foreach (var filePath in cliOptions.inputSrcFiles)
                 {
-                    if (gCsrcFileFilter.IsMatch(filePath))
-                    {
-                        srcContextLi.Add(parseSdccSourceFile(filePath));
-                    }
-                }
-
-                // if not exception, parse done
-                if (cliOptions.onlyTestSourceFile)
-                {
-                    log("ok !");
-                    return CODE_DONE;
-                }
-
-                // split and generate files
-                foreach (var item in srcContextLi)
-                {
-                    splitAndGenerateFiles(item);
+                    if (!gCsrcFileFilter.IsMatch(filePath)) continue;
+                    StringWriter sOut = new(), sErr = new();
+                    SourceContext result = ParseSourceFile(filePath, sOut, sErr);
+                    if (cliOptions.onlyTestSourceFile) continue; // if it's test mode, ignore split
+                    if (sErr.GetStringBuilder().Length != 0) throw new Exception("Parser Error: " + sErr.ToString());
+                    SplitAndGenerateFiles(result);
                 }
             }
             catch (Exception err)
             {
-                log(err.ToString());
+                error(err.ToString());
                 return CODE_ERR;
             }
 
             return CODE_DONE;
         }
 
-        private static void splitAndGenerateFiles(SourceContext info_)
+        private struct SymbolReferenceItem
         {
-            string baseName = Path.GetFileName(info_.srcFilePath);
-            string outDirPath = Path.GetDirectoryName(info_.srcFilePath) + Path.DirectorySeparatorChar + baseName + ".split";
+            public string uid;
+            public SourceSymbol[] refs;
+        };
 
-            // clean old files
-            if (Directory.Exists(outDirPath)) { Directory.Delete(outDirPath, true); }
+        private static void SplitAndGenerateFiles(SourceContext ctx)
+        {
+            string baseName = Path.GetFileNameWithoutExtension(ctx.SrcFilePath);
+            string extName = Path.GetExtension(ctx.SrcFilePath) ?? "";
+            string outDirPath = Path.GetDirectoryName(ctx.SrcFilePath) +
+                Path.DirectorySeparatorChar + baseName + extName + ".modules";
+
+            // funcs
+            uint NextFileId = 0;
+            var ObtainFileName = (uint id) => baseName + "_" + (NextFileId++).ToString() + extName;
+
+            // generate static reference chain
+            Dictionary<string, SourceSymbol[]> refLink = new(256);
+            foreach (var curSym in ctx.Symbols)
+            {
+                List<SourceSymbol> curRefs = new(64);
+                List<SourceSymbol> refSyms = new(64);
+
+                foreach (var refName in curSym.refers.Distinct())
+                {
+                    if (curSym.name == refName)
+                        continue; // skip loop self ref
+
+                    refSyms.AddRange(ctx.FindSymbol(refName));
+                }
+
+                Stack<SourceSymbol> symStk = new(refSyms);
+
+                while (symStk.Count > 0)
+                {
+                    var s = symStk.Pop();
+
+                    if (!s.IsStatic())
+                        continue; // we only need to handle static reference
+
+                    curRefs.Add(s);
+
+                    foreach (var n in s.refers)
+                    {
+                        if (s.name == n)
+                            continue; // skip loop self ref
+
+                        foreach (var item in ctx.FindSymbol(n))
+                        {
+                            symStk.Push(item);
+                        }
+                    }
+                }
+
+                refLink.Add(curSym.UID, curRefs.Distinct().ToArray());
+            }
+
+            // sort
+            List<SymbolReferenceItem> symRefList = new(64);
+            foreach (var kv in refLink)
+            {
+                symRefList.Add(new SymbolReferenceItem {
+                    uid = kv.Key,
+                    refs = kv.Value
+                });
+            }
+            symRefList.Sort((a, b) => b.refs.Length - a.refs.Length);
+
+            // split
+            List<string> resolvedLi = new();
+
+
+            // create dir
             Directory.CreateDirectory(outDirPath);
 
             // 
-            string[] srcTxtLines = File.ReadAllLines(info_.srcFilePath);
-
-            // 
+            string[] srcRawLines = File.ReadAllLines(ctx.SrcFilePath);
         }
 
-        private static SourceContext parseSdccSourceFile(string srcPath)
+        private static SourceContext ParseSourceFile(string srcPath, in StringWriter stdOut, in StringWriter stdErr)
         {
             ICharStream input = CharStreams.fromStream(new FileStream(srcPath, FileMode.Open, FileAccess.Read));
-            CodeListener cListener = new CodeListener(srcPath, input);
 
-            SdccLexer lexer = new SdccLexer(input);
+            CodeListener cListener = new(srcPath, input);
+            SdccLexer lexer = new(input);
+            CommonTokenStream tokens = new(lexer);
+            SdccParser parser = new(tokens, stdOut, stdErr);
+
             lexer.AddErrorListener(cListener);
-
-            SdccParser parser = new SdccParser(new CommonTokenStream(lexer));
             parser.AddErrorListener(cListener);
             parser.AddParseListener(cListener);
+
             var ctx = parser.compilationUnit();
 
             if (ctx.exception != null) throw ctx.exception;
@@ -350,13 +400,13 @@ namespace c_source_splitter
             return cListener.SourceContext;
         }
 
-        public static void log(string line, bool newLine = true)
+        public static void error(string line, bool newLine = true)
         {
             if (newLine) Console.WriteLine(line);
             else Console.Write(line);
         }
 
-        public static void debug(string line, bool newLine = true)
+        public static void print(string line, bool newLine = true)
         {
             if (newLine) Console.WriteLine(line);
             else Console.Write(line);
@@ -389,6 +439,14 @@ namespace c_source_splitter
             return attrs.Contains("static");
         }
 
+        public string UID
+        {
+            get {
+                return string.Format("{0}-{1}-{2}-{3}",
+                    name, symType.ToString(), typeName, startLocation.TokenIndex);
+            }
+        }
+
         public override bool Equals(object obj)
         {
             if (obj is SourceSymbol sym)
@@ -403,15 +461,59 @@ namespace c_source_splitter
 
         public override int GetHashCode()
         {
-            return name.GetHashCode();
+            return UID.GetHashCode();
         }
     }
 
     class SourceContext
     {
-        public string srcFilePath;
-        public ICharStream srcFileStream;
-        public List<SourceSymbol> symbols = new(256);
+        public string SrcFilePath;
+        public ICharStream SrcFileStream;
+        public IEnumerable<SourceSymbol> Symbols { get { return _symbols.Values; } }
+        public Dictionary<string, SourceSymbol> RawSymbolTable { get { return _symbols; } }
+
+        private readonly Dictionary<string, SourceSymbol> _symbols = new(256);
+
+        public SourceContext(string SrcFilePath, ICharStream SrcFileStream)
+        {
+            this.SrcFilePath = SrcFilePath;
+            this.SrcFileStream = SrcFileStream;
+        }
+
+        public void AddSymbol(SourceSymbol sym)
+        {
+            var uid = sym.UID;
+
+            if (!_symbols.ContainsKey(uid))
+            {
+                _symbols.Add(uid, sym);
+            }
+        }
+
+        public void AddRangeSymbol(IEnumerable<SourceSymbol> sym)
+        {
+            foreach (var symbol in sym)
+            {
+                var uid = symbol.UID;
+
+                if (!_symbols.ContainsKey(uid))
+                {
+                    _symbols.Add(uid, symbol);
+                }
+            }
+        }
+
+        public IEnumerable<SourceSymbol> FindSymbol(string symName)
+        {
+            return from kv in _symbols
+                   where kv.Value.name == symName
+                   select kv.Value;
+        }
+
+        public SourceSymbol GetSymbol(string key)
+        {
+            return _symbols[key];
+        }
     }
 
     class CodeParserException : Exception
@@ -427,11 +529,7 @@ namespace c_source_splitter
 
         public CodeListener(string srcFileName, ICharStream input)
         {
-            sourceContext = new SourceContext {
-                srcFilePath = srcFileName,
-                srcFileStream = input
-            };
-
+            sourceContext = new(srcFileName, input);
             stack.Push(ParserStatus.InGlobal);
         }
 
@@ -482,10 +580,10 @@ namespace c_source_splitter
                     {
                         var text = spec.GetText();
 
-                        if (text != "typedef")
-                        {
-                            vAttrList.Add(text);
-                        }
+                        if (text == "typedef")
+                            return symList.ToArray(); // skip typedef declare
+
+                        vAttrList.Add(text);
                     }
                 }
 
@@ -676,7 +774,7 @@ namespace c_source_splitter
             if (stack.Peek() == ParserStatus.InGlobal)
             {
                 var symLi = ParseVariableDeclare(context);
-                sourceContext.symbols.AddRange(symLi);
+                sourceContext.AddRangeSymbol(symLi);
             }
         }
 
@@ -887,7 +985,7 @@ namespace c_source_splitter
             }
 
             // add to func li
-            sourceContext.symbols.Add(new SourceSymbol {
+            sourceContext.AddSymbol(new SourceSymbol {
                 name = vFuncName,
                 symType = SymbolType.Function,
                 typeName = SourceSymbol.TYPE_NAME_UNKOWN,
@@ -900,12 +998,12 @@ namespace c_source_splitter
 
         public void SyntaxError(TextWriter output, IRecognizer recognizer, int offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
         {
-            throw new CodeParserException(string.Format("\"{0}\":{1},{2}: LexerError: {3}", sourceContext.srcFilePath, line, charPositionInLine, msg));
+            throw new CodeParserException(string.Format("\"{0}\":{1},{2}: LexerError: {3}", sourceContext.SrcFilePath, line, charPositionInLine, msg));
         }
 
         public void SyntaxError(TextWriter output, IRecognizer recognizer, IToken offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
         {
-            throw new CodeParserException(string.Format("\"{0}\":{1},{2}: SyntaxError: {3}", sourceContext.srcFilePath, line, charPositionInLine, msg));
+            throw new CodeParserException(string.Format("\"{0}\":{1},{2}: SyntaxError: {3}", sourceContext.SrcFilePath, line, charPositionInLine, msg));
         }
     }
 }
