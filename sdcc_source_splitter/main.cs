@@ -389,11 +389,21 @@ namespace c_source_splitter
             return attrs.Contains("static");
         }
 
-        public bool Equal(SourceSymbol sym)
+        public override bool Equals(object obj)
         {
-            return sym.name == name &&
-                   sym.symType == symType &&
-                   sym.typeName == typeName;
+            if (obj is SourceSymbol sym)
+            {
+                return sym.name == name &&
+                       sym.symType == symType &&
+                       sym.typeName == typeName;
+            }
+
+            return false;
+        }
+
+        public override int GetHashCode()
+        {
+            return name.GetHashCode();
         }
     }
 
@@ -427,47 +437,16 @@ namespace c_source_splitter
 
         public SourceContext SourceContext
         {
-            get
-            {
+            get {
                 return sourceContext;
             }
         }
 
         //
-        // interval vars
+        // some parser
         //
 
-        enum ParserStatus
-        {
-            InGlobal,
-            InFunctionDefine,
-            InDeclaration,
-            InStatement
-        }
-
-        private Stack<ParserStatus> stack = new(10);
-
-        public override void EnterDeclaration([NotNull] SdccParser.DeclarationContext context)
-        {
-            stack.Push(ParserStatus.InDeclaration);
-        }
-
-        public override void ExitDeclaration([NotNull] SdccParser.DeclarationContext context)
-        {
-            if (stack.Pop() != ParserStatus.InDeclaration)
-            {
-                throw new CodeParserException("Internal State Error");
-            }
-
-            // parse global vars
-            if (stack.Peek() == ParserStatus.InGlobal)
-            {
-                var symLi = ParseVariableDeclare(context);
-                sourceContext.symbols.AddRange(symLi);
-            }
-        }
-
-        private static SourceSymbol[] ParseVariableDeclare([NotNull] SdccParser.DeclarationContext context) 
+        private static SourceSymbol[] ParseVariableDeclare([NotNull] SdccParser.DeclarationContext context)
         {
             List<SourceSymbol> symList = new();
 
@@ -667,6 +646,40 @@ namespace c_source_splitter
             }
         }
 
+        //
+        // interval vars
+        //
+
+        enum ParserStatus
+        {
+            InGlobal,
+            InFunctionDefine,
+            InDeclaration,
+            InStatement
+        }
+
+        private Stack<ParserStatus> stack = new(10);
+
+        public override void EnterDeclaration([NotNull] SdccParser.DeclarationContext context)
+        {
+            stack.Push(ParserStatus.InDeclaration);
+        }
+
+        public override void ExitDeclaration([NotNull] SdccParser.DeclarationContext context)
+        {
+            if (stack.Pop() != ParserStatus.InDeclaration)
+            {
+                throw new CodeParserException("Internal State Error");
+            }
+
+            // parse global vars
+            if (stack.Peek() == ParserStatus.InGlobal)
+            {
+                var symLi = ParseVariableDeclare(context);
+                sourceContext.symbols.AddRange(symLi);
+            }
+        }
+
         private static ITerminalNode GetIdentifierFromDirectDeclarator(SdccParser.DirectDeclaratorContext ctx)
         {
             if (ctx.Identifier() != null)
@@ -715,26 +728,55 @@ namespace c_source_splitter
             {
                 throw new CodeParserException("Internal State Error");
             }
-            
+
             string vFuncName = null;
 
             List<string> vAttrList = new();
             List<string> vRefeList = new();
 
-            // get name
-            {
-                WalkChild<SdccParser.DirectDeclaratorContext>(context.declarator(), delegate (SdccParser.DirectDeclaratorContext directDeclCtx) {
-                    
-                    var declSpec = directDeclCtx.directDeclarator();
+            // function local vars
+            List<SourceSymbol> localVars = new();
 
-                    if (declSpec != null &&
+            // get name and params list
+            {
+                WalkChild(context.declarator(), delegate (SdccParser.DirectDeclaratorContext directDeclCtx) {
+
+                    var subDirectDecl = directDeclCtx.directDeclarator();
+
+                    if (subDirectDecl != null &&
                         directDeclCtx.LeftParen() != null &&
                         directDeclCtx.RightParen() != null) // check func decl, like: 'foo (int a, ...)'
                     {
-                        if (declSpec.Colon() != null)
+                        if (subDirectDecl.Colon() != null)
                             return false; // skip bit field decl
 
-                        var idfCtx = declSpec.Identifier();
+                        var paramsLiCtx = directDeclCtx.parameterTypeList();
+
+                        if (paramsLiCtx != null)
+                        {
+                            foreach (var declCtx in FindChild<SdccParser.DeclaratorContext>(paramsLiCtx))
+                            {
+                                foreach (var directDeclItem in FindChild<SdccParser.DirectDeclaratorContext>(declCtx))
+                                {
+                                    var ch = directDeclItem.GetChild(0);
+
+                                    if (ch is ITerminalNode node &&
+                                        node.Symbol.Type == SdccParser.Identifier)
+                                    {
+                                        localVars.Add(new SourceSymbol {
+                                            name = node.GetText(),
+                                            symType = SymbolType.Variable,
+                                            attrs = Array.Empty<string>(),
+                                            refers = Array.Empty<string>(),
+                                            startLocation = directDeclItem.Start,
+                                            stopLocation = directDeclItem.Stop
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
+                        var idfCtx = subDirectDecl.Identifier();
 
                         if (idfCtx != null)
                         {
@@ -742,12 +784,12 @@ namespace c_source_splitter
                             return true;
                         }
 
-                        var decl = declSpec.declarator();
+                        var decl = subDirectDecl.declarator();
 
                         if (decl != null)
                         {
-                            WalkChild<SdccParser.DirectDeclaratorContext>(decl.directDeclarator(), delegate (SdccParser.DirectDeclaratorContext directDeclCtx) {
-                                
+                            WalkChild(decl.directDeclarator(), delegate (SdccParser.DirectDeclaratorContext directDeclCtx) {
+
                                 var idfCtx = directDeclCtx.Identifier();
 
                                 if (idfCtx != null &&
@@ -790,7 +832,58 @@ namespace c_source_splitter
 
             // parse ref
             {
-                var funcBlockCtx = context.compoundStatement();
+                var funcBlockCtx = context.compoundStatement().blockItemList();
+
+                if (funcBlockCtx != null)
+                {
+                    foreach (var blockItemCtx in funcBlockCtx.blockItem())
+                    {
+                        var curCtx = blockItemCtx.GetChild(0);
+
+                        if (curCtx is SdccParser.StatementContext smtCtx)
+                        {
+                            foreach (var postFixExprCtx in FindChild<SdccParser.PostfixExpressionContext>(smtCtx))
+                            {
+                                WalkChild(postFixExprCtx, delegate (SdccParser.PrimaryExpressionContext baseExpr) {
+
+                                    var idfCtx = baseExpr.GetChild(0);
+
+                                    if (idfCtx is ITerminalNode node &&
+                                        node.Symbol.Type == SdccParser.Identifier)
+                                    {
+                                        vRefeList.Add(node.GetText());
+                                    }
+
+                                    return false;
+                                });
+                            }
+                        }
+
+                        else if (curCtx is SdccParser.DeclarationContext declCtx)
+                        {
+                            localVars.AddRange(ParseVariableDeclare(declCtx));
+                        }
+                    }
+
+                    // add initializer's refs
+                    foreach (var sym in localVars)
+                    {
+                        vRefeList.AddRange(sym.refers);
+                    }
+
+                    // del repeat items
+                    vRefeList = vRefeList.Distinct().ToList();
+
+                    // del local var refs
+                    vRefeList.RemoveAll((name) => {
+
+                        var v = localVars.Find((sym) => {
+                            return sym.name == name;
+                        });
+
+                        return v != null;
+                    });
+                }
             }
 
             // add to func li
