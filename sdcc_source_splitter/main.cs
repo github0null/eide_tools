@@ -243,7 +243,7 @@ namespace c_source_splitter
             [Option('d', Required = true, HelpText = "current work folder")]
             public string workFolder { get; set; }
 
-            [Option("test", Required = false, HelpText = "current work folder")]
+            [Option("test", Required = false, HelpText = "only test source file")]
             public bool onlyTestSourceFile { get; set; }
 
             [Value(0, Min = 1, Required = true, HelpText = "preprocessed source files")]
@@ -372,7 +372,8 @@ namespace c_source_splitter
     class SourceSymbol
     {
         public string name;
-        public SymbolType type;
+        public SymbolType symType;
+        public string typeName;
         public string[] attrs;
         public string[] refers;
 
@@ -386,7 +387,9 @@ namespace c_source_splitter
 
         public bool Equal(SourceSymbol sym)
         {
-            return sym.name == name && sym.type == type;
+            return sym.name == name &&
+                   sym.symType == symType &&
+                   sym.typeName == typeName;
         }
     }
 
@@ -397,14 +400,20 @@ namespace c_source_splitter
         public List<SourceSymbol> symbols = new(256);
     }
 
+    class CodeParserException : Exception
+    {
+        public CodeParserException(string msg) : base(msg)
+        {
+        }
+    }
+
     class CodeListener : SdccBaseListener, IAntlrErrorListener<int>, IAntlrErrorListener<IToken>
     {
         private SourceContext sourceContext;
 
         public CodeListener(string srcFileName, ICharStream input)
         {
-            sourceContext = new SourceContext
-            {
+            sourceContext = new SourceContext {
                 srcFilePath = srcFileName,
                 srcFileStream = input
             };
@@ -414,7 +423,8 @@ namespace c_source_splitter
 
         public SourceContext SourceContext
         {
-            get {
+            get
+            {
                 return sourceContext;
             }
         }
@@ -442,15 +452,20 @@ namespace c_source_splitter
         {
             if (stack.Pop() != ParserStatus.InDeclaration)
             {
-                throw new Exception("Internal State Error");
+                throw new CodeParserException("Internal State Error");
             }
 
             // parse global vars
             if (stack.Peek() == ParserStatus.InGlobal)
             {
+                string vTypeName = null;
+
                 List<string> vAttrList = new();
                 List<string> vNameList = new();
-                List<string> vRefeList = new();
+
+                Dictionary<string, List<string>> vRefsMap = new();
+
+                // ---
 
                 var declSpec = context.declarationSpecifiers();
 
@@ -459,6 +474,16 @@ namespace c_source_splitter
 
                 foreach (var declaration in declSpec.declarationSpecifier())
                 {
+                    // type name
+                    {
+                        var typeDecl = declaration.typeSpecifier();
+
+                        if (typeDecl != null)
+                        {
+                            vTypeName = typeDecl.GetText();
+                        }
+                    }
+
                     // Store Class
                     {
                         var spec = declaration.storageClassSpecifier();
@@ -477,6 +502,7 @@ namespace c_source_splitter
                     // Qualifier
                     {
                         var spec = declaration.typeQualifier();
+
                         if (spec != null)
                         {
                             vAttrList.Add(spec.GetText());
@@ -486,6 +512,7 @@ namespace c_source_splitter
                     // skip some type
                     {
                         var spec = declaration.typeSpecifier();
+
                         if (spec != null)
                         {
                             var structSpec = spec.structOrUnionSpecifier();
@@ -511,12 +538,22 @@ namespace c_source_splitter
                 if (initDeclCtx == null)
                     return; // it's not a var declare, skip
 
+                if (vTypeName == null)
+                    vTypeName = "<null>";
+
                 foreach (var item in initDeclCtx.initDeclarator())
                 {
                     var decl = item.declarator().directDeclarator();
 
                     if (decl.LeftParen() != null && decl.RightParen() != null)
                         continue; // it's a function decl, skip
+
+                    var vName = GetIdentifierFromDirectDeclarator(decl).GetText();
+
+                    vNameList.Add(vName);
+
+                    if (vRefsMap.ContainsKey(vName) == false)
+                        vRefsMap.Add(vName, new());
 
                     var initializerCtx = item.initializer();
 
@@ -530,24 +567,22 @@ namespace c_source_splitter
 
                             if (idf != null)
                             {
-                                vRefeList.Add(idf.GetText());
+                                vRefsMap[vName].Add(idf.GetText());
                             }
                         }
                     }
-
-                    vNameList.Add(GetIdentifierFromDirectDeclarator(decl).GetText());
                 }
 
                 if (vNameList.Count > 0)
                 {
                     foreach (var name in vNameList)
                     {
-                        sourceContext.symbols.Add(new SourceSymbol
-                        {
+                        sourceContext.symbols.Add(new SourceSymbol {
                             name = name,
-                            type = SymbolType.Variable,
+                            symType = SymbolType.Variable,
+                            typeName = vTypeName,
                             attrs = vAttrList.ToArray(),
-                            refers = vRefeList.ToArray(),
+                            refers = vRefsMap[name].ToArray(),
                             startLocation = context.Start,
                             stopLocation = context.Stop
                         });
@@ -588,6 +623,37 @@ namespace c_source_splitter
             return result.ToArray();
         }
 
+        private delegate bool RuleContextChildWalker<T>(T ctx) where T : ParserRuleContext;
+
+        private static void WalkChild<T>(ParserRuleContext rootCtx, RuleContextChildWalker<T> walker) where T : ParserRuleContext
+        {
+            Stack<ParserRuleContext> ctxStack = new();
+
+            ctxStack.Push(rootCtx);
+
+            while (ctxStack.Count > 0)
+            {
+                var ctx = ctxStack.Pop();
+
+                if (ctx is T t)
+                {
+                    if (walker(t))
+                        return;
+                }
+
+                if (ctx.ChildCount > 0)
+                {
+                    foreach (var child in ctx.children)
+                    {
+                        if (child is ParserRuleContext c)
+                        {
+                            ctxStack.Push(c);
+                        }
+                    }
+                }
+            }
+        }
+
         private ITerminalNode GetIdentifierFromDirectDeclarator(SdccParser.DirectDeclaratorContext ctx)
         {
             if (ctx.Identifier() != null)
@@ -595,20 +661,21 @@ namespace c_source_splitter
                 return ctx.Identifier();
             }
 
-            else if (ctx.declarator() != null)
+            var declCtx = ctx.declarator();
+
+            if (declCtx != null)
             {
-                return GetIdentifierFromDirectDeclarator(ctx.declarator().directDeclarator());
+                return GetIdentifierFromDirectDeclarator(declCtx.directDeclarator());
             }
 
-            else if (ctx.directDeclarator() != null)
+            var directDeclCtx = ctx.directDeclarator();
+
+            if (directDeclCtx != null)
             {
-                return GetIdentifierFromDirectDeclarator(ctx.directDeclarator());
+                return GetIdentifierFromDirectDeclarator(directDeclCtx);
             }
 
-            else
-            {
-                throw new Exception("Internal Error In: 'getIdentifierFromDirectDeclarator'");
-            }
+            throw new CodeParserException("Internal Error In: 'getIdentifierFromDirectDeclarator'");
         }
 
         public override void EnterStatement([NotNull] SdccParser.StatementContext context)
@@ -618,12 +685,9 @@ namespace c_source_splitter
 
         public override void ExitStatement([NotNull] SdccParser.StatementContext context)
         {
-            Program.debug(string.Format("[Statement]: {0}",
-                sourceContext.srcFileStream.GetText(Interval.Of(context.Start.StartIndex, context.Stop.StartIndex))));
-
             if (stack.Pop() != ParserStatus.InStatement)
             {
-                throw new Exception("Internal State Error");
+                throw new CodeParserException("Internal State Error");
             }
         }
 
@@ -634,23 +698,108 @@ namespace c_source_splitter
 
         public override void ExitFunctionDefinition([NotNull] SdccParser.FunctionDefinitionContext context)
         {
-            Program.debug(string.Format("[end] [FunctionDefinition]: {0}",
-                sourceContext.srcFileStream.GetText(Interval.Of(context.Start.StartIndex, context.Stop.StartIndex))));
-
             if (stack.Pop() != ParserStatus.InFunctionDefine)
             {
-                throw new Exception("Internal State Error");
+                throw new CodeParserException("Internal State Error");
             }
+            
+            string vFuncName = null;
+
+            List<string> vAttrList = new();
+            List<string> vRefeList = new();
+
+            // get name
+            {
+                WalkChild<SdccParser.DirectDeclaratorContext>(context.declarator(), delegate (SdccParser.DirectDeclaratorContext directDeclCtx) {
+                    
+                    var declSpec = directDeclCtx.directDeclarator();
+
+                    if (declSpec != null &&
+                        directDeclCtx.LeftParen() != null &&
+                        directDeclCtx.RightParen() != null) // check func decl, like: 'foo (int a, ...)'
+                    {
+                        if (declSpec.Colon() != null)
+                            return false; // skip bit field decl
+
+                        var idfCtx = declSpec.Identifier();
+
+                        if (idfCtx != null)
+                        {
+                            vFuncName = idfCtx.GetText();
+                            return true;
+                        }
+
+                        var decl = declSpec.declarator();
+
+                        if (decl != null)
+                        {
+                            WalkChild<SdccParser.DirectDeclaratorContext>(decl.directDeclarator(), delegate (SdccParser.DirectDeclaratorContext directDeclCtx) {
+                                
+                                var idfCtx = directDeclCtx.Identifier();
+
+                                if (idfCtx != null &&
+                                    directDeclCtx.ChildCount == 1 && // only have a identifier node
+                                    directDeclCtx.Parent is SdccParser.DeclaratorContext) // parent is declarator
+                                {
+                                    vFuncName = idfCtx.GetText();
+                                    return true;
+                                }
+
+                                return false;
+                            });
+                        }
+                    }
+
+                    return false;
+                });
+            }
+
+            if (vFuncName == null)
+                return;
+
+            // get specifiers
+            {
+                var declSpec = context.declarationSpecifiers();
+
+                if (declSpec != null)
+                {
+                    foreach (var storeClasCtx in FindChild<SdccParser.StorageClassSpecifierContext>(declSpec))
+                    {
+                        vAttrList.Add(storeClasCtx.GetText());
+                    }
+
+                    foreach (var funcSpecCtx in FindChild<SdccParser.FunctionSpecifierContext>(declSpec))
+                    {
+                        vAttrList.Add(funcSpecCtx.GetText());
+                    }
+                }
+            }
+
+            // parse ref
+            {
+                var funcBlockCtx = context.compoundStatement();
+            }
+
+            // add to func li
+            sourceContext.symbols.Add(new SourceSymbol {
+                name = vFuncName,
+                symType = SymbolType.Function,
+                typeName = "<null>",
+                attrs = vAttrList.ToArray(),
+                refers = vRefeList.ToArray(),
+                startLocation = context.Start,
+                stopLocation = context.Stop
+            });
         }
 
         public void SyntaxError(TextWriter output, IRecognizer recognizer, int offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
         {
-            throw new Exception(string.Format("\"{0}\":{1},{2}: LexerError: {3}", sourceContext.srcFilePath, line, charPositionInLine, msg));
+            throw new CodeParserException(string.Format("\"{0}\":{1},{2}: LexerError: {3}", sourceContext.srcFilePath, line, charPositionInLine, msg));
         }
 
         public void SyntaxError(TextWriter output, IRecognizer recognizer, IToken offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
         {
-            throw new Exception(string.Format("\"{0}\":{1},{2}: SyntaxError: {3}", sourceContext.srcFilePath, line, charPositionInLine, msg));
+            throw new CodeParserException(string.Format("\"{0}\":{1},{2}: SyntaxError: {3}", sourceContext.srcFilePath, line, charPositionInLine, msg));
         }
     }
 }

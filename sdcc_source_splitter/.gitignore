@@ -1,3 +1,4 @@
 ﻿**/launchSettings.json
 .antlr
-.vscode
+test
+.vscode/launch.json
