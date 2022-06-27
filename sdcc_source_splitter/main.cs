@@ -516,7 +516,6 @@ namespace c_source_splitter
                         if (spec != null)
                         {
                             var structSpec = spec.structOrUnionSpecifier();
-                            var enumSpec = spec.enumSpecifier();
 
                             if (structSpec != null && structSpec.structDeclarationList() != null)
                             {
@@ -524,7 +523,9 @@ namespace c_source_splitter
                                 return;
                             }
 
-                            else if (enumSpec != null && enumSpec.enumeratorList() != null)
+                            var enumSpec = spec.enumSpecifier();
+
+                            if (enumSpec != null && enumSpec.enumeratorList() != null)
                             {
                                 // it's a enum type declare, skip it
                                 return;
