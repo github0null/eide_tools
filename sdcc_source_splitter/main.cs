@@ -205,34 +205,6 @@ namespace c_source_splitter
         }
     }
 
-    /*  
-     export interface BuilderParams {
-        name: string;
-        target: string;
-        toolchain: ToolchainName;
-        toolchainCfgFile: string;
-        toolchainLocation: string;
-        buildMode: string;
-        showRepathOnLog?: boolean,
-        threadNum?: number;
-        dumpPath: string;
-        outDir: string;
-        builderDir?: string;
-        rootDir: string;
-        ram?: number;
-        rom?: number;
-        sourceList: string[];
-        sourceParams?: { [name: string]: string; };
-        sourceParamsMtime?: number;
-        incDirs: string[];
-        libDirs: string[];
-        defines: string[];
-        options: ICompileOptions;
-        sha?: { [options_name: string]: string };
-        env?: { [name: string]: any };
-     }
-    */
-
     class Program
     {
         public class Options
@@ -310,8 +282,9 @@ namespace c_source_splitter
         {
             string baseName = Path.GetFileNameWithoutExtension(ctx.SrcFilePath);
             string extName = Path.GetExtension(ctx.SrcFilePath) ?? "";
-            string outDirPath = Path.GetDirectoryName(ctx.SrcFilePath) +
-                Path.DirectorySeparatorChar + baseName + extName + ".modules";
+            string baseDir = Path.GetDirectoryName(ctx.SrcFilePath);
+            if (string.IsNullOrWhiteSpace(baseDir)) baseDir = ".";
+            string outDirPath = baseDir + Path.DirectorySeparatorChar + baseName + extName + ".modules";
 
             // funcs
             uint NextFileId = 0;
@@ -359,19 +332,72 @@ namespace c_source_splitter
             }
 
             // sort
-            List<SymbolReferenceItem> symRefList = new(64);
+            List<SymbolReferenceItem> unresolvedLi = new(64);
             foreach (var kv in refLink)
             {
-                symRefList.Add(new SymbolReferenceItem {
+                unresolvedLi.Add(new SymbolReferenceItem {
                     uid = kv.Key,
                     refs = kv.Value
                 });
             }
-            symRefList.Sort((a, b) => b.refs.Length - a.refs.Length);
+            unresolvedLi.Sort((a, b) => b.refs.Length - a.refs.Length);
 
-            // split
-            List<string> resolvedLi = new();
+            // split all sym
+            List<List<SourceSymbol>> symGrps = new(128);
 
+            Func<SourceSymbol, int> FindResolvedGrpIdx = delegate (SourceSymbol sym) {
+                return symGrps.FindIndex((symLi) => symLi.Contains(sym));
+            };
+
+            foreach (var symInfo in unresolvedLi)
+            {
+                var rootSym = ctx.GetSymbol(symInfo.uid);
+
+                if (FindResolvedGrpIdx(rootSym) != -1)
+                    continue;
+
+                if (rootSym.symType == SourceSymbol.SymbolType.Variable &&
+                    rootSym.IsStatic() == false)
+                    continue; // ignore global variables, it's extern
+
+                List<SourceSymbol> curSyms = new();
+
+                // add root
+                curSyms.Add(rootSym);
+
+                int expectedGrpIdx = -1;
+
+                // add refs
+                foreach (var refedSym in symInfo.refs)
+                {
+                    var conflictIdx = FindResolvedGrpIdx(refedSym);
+
+                    if (conflictIdx != -1 &&
+                        expectedGrpIdx != -1 &&
+                        conflictIdx != expectedGrpIdx) // multi cross references, merge group
+                    {
+                        var n = symGrps[conflictIdx].Union(symGrps[expectedGrpIdx]).ToList();
+                        symGrps = symGrps
+                            .Where((li, idx) => { return idx != conflictIdx && idx != expectedGrpIdx; })
+                            .ToList();
+                        symGrps.Add(n);
+                    }
+
+                    if (conflictIdx != -1)
+                        expectedGrpIdx = conflictIdx;
+
+                    curSyms.Add(refedSym);
+                }
+
+                if (expectedGrpIdx != -1)
+                    symGrps[expectedGrpIdx].AddRange(curSyms);
+                else
+                    symGrps.Add(curSyms);
+            }
+
+            // del repeat
+            for (int i = 0; i < symGrps.Count; i++)
+                symGrps[i] = symGrps[i].Distinct().ToList();
 
             // create dir
             Directory.CreateDirectory(outDirPath);
@@ -413,14 +439,14 @@ namespace c_source_splitter
         }
     }
 
-    enum SymbolType
-    {
-        Variable,
-        Function,
-    }
-
     class SourceSymbol
     {
+        public enum SymbolType
+        {
+            Variable,
+            Function,
+        }
+
         public static string TYPE_NAME_UNKOWN = "<unkown-type>";
 
         // ---
@@ -541,7 +567,7 @@ namespace c_source_splitter
         }
 
         //
-        // some parser
+        // private utils func
         //
 
         private static SourceSymbol[] ParseVariableDeclare([NotNull] SdccParser.DeclarationContext context)
@@ -668,7 +694,7 @@ namespace c_source_splitter
                 {
                     symList.Add(new SourceSymbol {
                         name = name,
-                        symType = SymbolType.Variable,
+                        symType = SourceSymbol.SymbolType.Variable,
                         typeName = vTypeName,
                         attrs = vAttrList.ToArray(),
                         refers = vRefsMap[name].ToArray(),
@@ -744,6 +770,35 @@ namespace c_source_splitter
             }
         }
 
+        private static ITerminalNode GetIdentifierFromDirectDeclarator(SdccParser.DirectDeclaratorContext ctx)
+        {
+            if (ctx.Identifier() != null)
+            {
+                return ctx.Identifier();
+            }
+
+            var declCtx = ctx.declarator();
+
+            if (declCtx != null)
+            {
+                return GetIdentifierFromDirectDeclarator(declCtx.directDeclarator());
+            }
+
+            var directDeclCtx = ctx.directDeclarator();
+
+            if (directDeclCtx != null)
+            {
+                return GetIdentifierFromDirectDeclarator(directDeclCtx);
+            }
+
+            throw new CodeParserException("Internal Error In: 'getIdentifierFromDirectDeclarator'");
+        }
+
+        private static bool IsTokenAhead(IToken a, IToken b)
+        {
+            return a.Line < b.Line || (a.Line == b.Line && a.Column < b.Column);
+        }
+
         //
         // interval vars
         //
@@ -776,30 +831,6 @@ namespace c_source_splitter
                 var symLi = ParseVariableDeclare(context);
                 sourceContext.AddRangeSymbol(symLi);
             }
-        }
-
-        private static ITerminalNode GetIdentifierFromDirectDeclarator(SdccParser.DirectDeclaratorContext ctx)
-        {
-            if (ctx.Identifier() != null)
-            {
-                return ctx.Identifier();
-            }
-
-            var declCtx = ctx.declarator();
-
-            if (declCtx != null)
-            {
-                return GetIdentifierFromDirectDeclarator(declCtx.directDeclarator());
-            }
-
-            var directDeclCtx = ctx.directDeclarator();
-
-            if (directDeclCtx != null)
-            {
-                return GetIdentifierFromDirectDeclarator(directDeclCtx);
-            }
-
-            throw new CodeParserException("Internal Error In: 'getIdentifierFromDirectDeclarator'");
         }
 
         public override void EnterStatement([NotNull] SdccParser.StatementContext context)
@@ -863,7 +894,7 @@ namespace c_source_splitter
                                     {
                                         localVars.Add(new SourceSymbol {
                                             name = node.GetText(),
-                                            symType = SymbolType.Variable,
+                                            symType = SourceSymbol.SymbolType.Variable,
                                             attrs = Array.Empty<string>(),
                                             refers = Array.Empty<string>(),
                                             startLocation = directDeclItem.Start,
@@ -987,7 +1018,7 @@ namespace c_source_splitter
             // add to func li
             sourceContext.AddSymbol(new SourceSymbol {
                 name = vFuncName,
-                symType = SymbolType.Function,
+                symType = SourceSymbol.SymbolType.Function,
                 typeName = SourceSymbol.TYPE_NAME_UNKOWN,
                 attrs = vAttrList.ToArray(),
                 refers = vRefeList.ToArray(),
