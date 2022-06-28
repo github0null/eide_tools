@@ -410,69 +410,139 @@ namespace c_source_splitter
                 .Where(sym => sym.symType != SourceSymbol.SymbolType.Function && !sym.IsStatic && !sym.IsExtern)
                 .ToArray();
 
-            foreach (var syms in symGrps)
+            var DisableSymbolFromTxtLines = delegate (StringBuilder[] lines_, SourceSymbol sym_) {
+
+                if (sym_.startLocation.Line == sym_.stopLocation.Line) // for single line symbol
+                {
+                    var linIdx = sym_.stopLocation.Line;
+                    var len = (sym_.stopLocation.Column - sym_.startLocation.Column) + 1;
+                    lines_[linIdx - 1].Remove(sym_.startLocation.Column, len);
+                    lines_[linIdx - 1].Insert(sym_.startLocation.Column, "".PadRight(len));
+                }
+                else // for multi-line symbol
+                {
+                    for (int i = sym_.startLocation.Line - 1; i < sym_.stopLocation.Line; i++)
+                    {
+                        if (i == sym_.startLocation.Line - 1)
+                        {
+                            var remainLen = lines_[i].Length - sym_.startLocation.Column;
+                            lines_[i].Remove(sym_.startLocation.Column, remainLen);
+                            lines_[i].Insert(sym_.startLocation.Column, "".PadRight(remainLen));
+                        }
+                        else if (i == sym_.stopLocation.Line - 1)
+                        {
+                            lines_[i].Remove(0, sym_.stopLocation.Column + 1);
+                            lines_[i].Insert(0, "".PadRight(sym_.stopLocation.Column + 1));
+                        }
+                        else
+                        {
+                            lines_[i].Remove(0, lines_[i].Length);
+                        }
+                    }
+                }
+            };
+
+            foreach (var srcSyms in symGrps)
             {
                 StringBuilder[] srcLines = srcRawLines.Select(l => new StringBuilder(l)).ToArray();
 
-                uint curFileId = NextFileId;
+                bool IsInModule_0 = NextFileId == 0;
                 string srcFileName = outDirPath + Path.DirectorySeparatorChar + ObtainFileName();
 
-                // ban unused symbols
-                var disSymLi = ctx.Symbols.Where(sym => !syms.Contains(sym));
-                foreach (var sym in disSymLi)
-                {
-                    // try store some vars for module[0]
-                    if (curFileId == 0)
-                    {
-                        if (sym.symType == SourceSymbol.SymbolType.Variable &&
-                            !sym.IsStatic)
-                            continue; // store global var or extern var
-                    }
+                // ---
 
-                    // we need add 'extern' prefix for global vars in module[1...n]
-                    else
+                foreach (var symGrp in ctx.ShareDeclareSymbols)
+                {
+                    if (symGrp[0].IsStatic)
                     {
-                        if (sym.symType == SourceSymbol.SymbolType.Variable &&
-                            !sym.IsStatic && !sym.IsExtern)
+                        var isBannedSomeone = symGrp.Any(s => !srcSyms.Contains(s));
+
+                        if (isBannedSomeone) // if some sym is disabled, we need split them
                         {
-                            string nDeclareTxt = "extern " + sym.declareSpec + " " + sym.name + ";";
-                            srcLines[sym.stopLocation.Line - 1].Insert(sym.stopLocation.Column + 1, "\n" + nDeclareTxt);
+                            var aliveSyms = symGrp.Where(s => srcSyms.Contains(s)).ToArray();
+
+                            if (aliveSyms.Length > 0)
+                            {
+                                string nDeclLine = "";
+
+                                foreach (var sym_ in aliveSyms)
+                                {
+                                    nDeclLine += sym_.declareSpec + " " + sym_.name;
+                                    if (sym_.initializer != null) nDeclLine += "=" + sym_.initializer;
+                                    nDeclLine += ";\n";
+                                }
+
+                                var stopLocation = symGrp[0].stopLocation;
+                                srcLines[stopLocation.Line - 1].Insert(stopLocation.Column + 1, nDeclLine);
+                            }
+
+                            DisableSymbolFromTxtLines(srcLines, symGrp[0]);
                         }
                     }
 
-                    //
-                    // disable lines by add '//' or '/**/' annotation
-                    //
-
-                    if (sym.startLocation.Line == sym.stopLocation.Line) // for single line symbol
+                    else
                     {
-                        var linIdx = sym.stopLocation.Line;
-                        srcLines[linIdx - 1].Insert(sym.stopLocation.Column + 1, "\n");
-                        srcLines[linIdx - 1].Insert(sym.startLocation.Column, "//");
-                    }
-                    else // for multi-line symbol
-                    {
-                        for (int i = sym.startLocation.Line - 1; i < sym.stopLocation.Line; i++)
+                        // in module[0] file
+                        if (IsInModule_0)
                         {
-                            if (i == sym.startLocation.Line - 1)
+                            // nothing need to do
+                        }
+
+                        // in module[1..n] files
+                        else
+                        {
+                            string nDeclLine = "";
+
+                            foreach (var sym_ in symGrp)
                             {
-                                srcLines[i].Insert(sym.startLocation.Column, "//");
+                                nDeclLine += "extern " + sym_.declareSpec + " " + sym_.name + ";\n";
+                            }
+
+                            var stopLocation = symGrp[0].stopLocation;
+                            srcLines[stopLocation.Line - 1].Insert(stopLocation.Column + 1, nDeclLine);
+
+                            DisableSymbolFromTxtLines(srcLines, symGrp[0]);
+                        }
+                    }
+                }
+
+                // ---
+
+                var bannedSyms = ctx.Symbols.Where(s => !srcSyms.Contains(s) && !ctx.IsShareDeclareSymbol(s.LocationID));
+
+                foreach (var sym in bannedSyms)
+                {
+                    if (sym.symType == SourceSymbol.SymbolType.Variable)
+                    {
+                        if (sym.IsStatic)
+                        {
+                            DisableSymbolFromTxtLines(srcLines, sym);
+                        }
+                        else
+                        {
+                            if (IsInModule_0)
+                            {
+                                continue; // store global var or extern var
                             }
                             else
                             {
-                                if (i == sym.stopLocation.Line - 1)
-                                {
-                                    srcLines[i].Insert(sym.stopLocation.Column + 1, "\n");
-                                }
-
-                                srcLines[i].Insert(0, "//");
+                                string nDeclareTxt = "extern " + sym.declareSpec + " " + sym.name + ";";
+                                srcLines[sym.stopLocation.Line - 1].Insert(sym.stopLocation.Column + 1, nDeclareTxt);
+                                DisableSymbolFromTxtLines(srcLines, sym);
                             }
                         }
+                    }
+
+                    else // function
+                    {
+                        DisableSymbolFromTxtLines(srcLines, sym);
                     }
                 }
 
                 var wLines = srcLines.Select(sl => sl.ToString()).ToArray();
                 File.WriteAllLines(srcFileName, wLines);
+
+                print(srcFileName);
             }
         }
 
@@ -528,6 +598,8 @@ namespace c_source_splitter
         public string[] attrs = Array.Empty<string>();
         public string[] refers = Array.Empty<string>();
 
+        public string initializer = null; // like: '= 15', '= { 12, 3 }' ...
+
         public IToken startLocation = null;
         public IToken stopLocation = null;
 
@@ -555,6 +627,14 @@ namespace c_source_splitter
             }
         }
 
+        public string LocationID
+        {
+            get {
+                if (startLocation == null || stopLocation == null) return null;
+                return string.Format("{0}-{1}", startLocation.TokenIndex, stopLocation.TokenIndex);
+            }
+        }
+
         public override bool Equals(object obj)
         {
             if (obj is SourceSymbol sym)
@@ -577,10 +657,13 @@ namespace c_source_splitter
     {
         public string SrcFilePath;
         public ICharStream SrcFileStream;
+
+        private readonly Dictionary<string, SourceSymbol> _symbols = new(256);
         public IEnumerable<SourceSymbol> Symbols { get { return _symbols.Values; } }
         public Dictionary<string, SourceSymbol> RawSymbolTable { get { return _symbols; } }
 
-        private readonly Dictionary<string, SourceSymbol> _symbols = new(256);
+        private readonly Dictionary<string, List<SourceSymbol>> _share_declare_symbols = new(64);
+        public IEnumerable<List<SourceSymbol>> ShareDeclareSymbols { get { return _share_declare_symbols.Values; } }
 
         public SourceContext(string SrcFilePath, ICharStream SrcFileStream)
         {
@@ -598,9 +681,9 @@ namespace c_source_splitter
             }
         }
 
-        public void AddRangeSymbol(IEnumerable<SourceSymbol> sym)
+        public void AddRangeSymbol(IEnumerable<SourceSymbol> syms)
         {
-            foreach (var symbol in sym)
+            foreach (var symbol in syms)
             {
                 var uid = symbol.UID;
 
@@ -611,6 +694,20 @@ namespace c_source_splitter
             }
         }
 
+        public void AddShareDeclareSymbols(IEnumerable<SourceSymbol> syms)
+        {
+            var sym = syms.First();
+
+            if (sym == null) return;
+
+            AddRangeSymbol(syms);
+
+            if (_share_declare_symbols.ContainsKey(sym.LocationID))
+                _share_declare_symbols[sym.LocationID].AddRange(syms);
+            else
+                _share_declare_symbols.Add(sym.LocationID, new List<SourceSymbol>(syms));
+        }
+
         public IEnumerable<SourceSymbol> FindSymbol(string symName)
         {
             return from kv in _symbols
@@ -618,9 +715,25 @@ namespace c_source_splitter
                    select kv.Value;
         }
 
-        public SourceSymbol GetSymbol(string key)
+        public SourceSymbol GetSymbol(string uid)
         {
-            return _symbols[key];
+            if (!_symbols.ContainsKey(uid))
+                return null;
+
+            return _symbols[uid];
+        }
+
+        public SourceSymbol[] GetShareDeclareSymbols(string locationID)
+        {
+            if (!_share_declare_symbols.ContainsKey(locationID))
+                return null;
+
+            return _share_declare_symbols[locationID].ToArray();
+        }
+
+        public bool IsShareDeclareSymbol(string locationID)
+        {
+            return _share_declare_symbols.ContainsKey(locationID);
         }
     }
 
@@ -633,18 +746,18 @@ namespace c_source_splitter
 
     class CodeListener : SdccBaseListener, IAntlrErrorListener<int>, IAntlrErrorListener<IToken>
     {
-        private SourceContext sourceContext;
+        private readonly SourceContext _src_ctx;
 
         public CodeListener(string srcFileName, ICharStream input)
         {
-            sourceContext = new(srcFileName, input);
+            _src_ctx = new(srcFileName, input);
             stack.Push(ParserStatus.InGlobal);
         }
 
         public SourceContext SourceContext
         {
             get {
-                return sourceContext;
+                return _src_ctx;
             }
         }
 
@@ -660,134 +773,150 @@ namespace c_source_splitter
         private SourceSymbol[] ParseVariableDeclare([NotNull] SdccParser.DeclarationContext context)
         {
             string vTypeName = null;
-            string vDeclSpecTxt = null;
+
             List<string> vAttrList = new();
             List<string> vNameList = new();
             Dictionary<string, List<string>> vRefsMap = new();
+            Dictionary<string, string> initializerMap = new();
 
             // ---
 
             var declSpec = context.declarationSpecifiers();
-
             if (declSpec == null)
                 return Array.Empty<SourceSymbol>(); // skip other declare type
 
-            foreach (var declaration in declSpec.declarationSpecifier())
+            var allChildren = FindChild<ParserRuleContext>(declSpec);
+
+            // skip struct/enum type declare
+            if (allChildren.Any(ctx => ctx is SdccParser.StructOrUnionSpecifierContext ||
+                                       ctx is SdccParser.EnumSpecifierContext))
             {
-                var typeSpec = declaration.typeSpecifier();
+                return Array.Empty<SourceSymbol>();
+            }
 
-                // skip some type
-                if (typeSpec != null)
+            // parse all specs
+
+            var sClasSpecs = allChildren.Where(c => c is SdccParser.StorageClassSpecifierContext).ToArray();
+
+            foreach (var item in sClasSpecs)
+            {
+                var nodeTxt = item.GetText();
+
+                if (nodeTxt == "typedef")
+                    return Array.Empty<SourceSymbol>(); // skip typedef
+
+                vAttrList.Add(nodeTxt);
+            }
+
+            var typeSpecs = allChildren.Where(c => c is SdccParser.TypeSpecifierContext).ToArray();
+
+            foreach (var item in typeSpecs)
+            {
+                var typeCtx = item.GetChild(0);
+
+                if (typeCtx is ITerminalNode ||
+                    typeCtx is SdccParser.AtomicTypeSpecifierContext)
                 {
-                    var structSpec = typeSpec.structOrUnionSpecifier();
-
-                    if (structSpec != null && structSpec.structDeclarationList() != null)
-                    {
-                        // it's a struct type declare, skip it
-                        return Array.Empty<SourceSymbol>();
-                    }
-
-                    var enumSpec = typeSpec.enumSpecifier();
-
-                    if (enumSpec != null && enumSpec.enumeratorList() != null)
-                    {
-                        // it's a enum type declare, skip it
-                        return Array.Empty<SourceSymbol>();
-                    }
+                    vTypeName = GetParseNodeFullText(SourceContext.SrcFileStream, item);
                 }
 
-                // get type name
-                if (typeSpec != null)
+                else if (typeCtx is SdccParser.TypedefNameContext)
                 {
-                    vTypeName = GetParseNodeFullText(SourceContext.SrcFileStream, typeSpec);
-                }
-
-                // Store Class
-                {
-                    var spec = declaration.storageClassSpecifier();
-
-                    if (spec != null)
-                    {
-                        var text = spec.GetText();
-
-                        if (text == "typedef")
-                            return Array.Empty<SourceSymbol>(); // skip typedef declare
-
-                        vAttrList.Add(text);
-                    }
-                }
-
-                // Qualifier
-                {
-                    var spec = declaration.typeQualifier();
-
-                    if (spec != null)
-                    {
-                        vAttrList.Add(spec.GetText());
-                    }
+                    if (vTypeName == null)
+                        vTypeName = GetParseNodeFullText(SourceContext.SrcFileStream, item);
+                    else
+                        vNameList.Add(GetParseNodeFullText(SourceContext.SrcFileStream, item));
                 }
             }
 
-            // get full decl spec txt
-            vDeclSpecTxt = GetParseNodeFullText(SourceContext.SrcFileStream, declSpec);
+            var typeQualSpecs = allChildren.Where(c => c is SdccParser.TypeQualifierContext).ToArray();
+
+            foreach (var item in typeQualSpecs)
+            {
+                vAttrList.Add(item.GetText());
+            }
+
+            var attrSpecs = allChildren.Where(c => c is SdccParser.FunctionSpecifierContext).ToArray();
+
+            foreach (var item in attrSpecs)
+            {
+                vAttrList.Add(GetParseNodeFullText(SourceContext.SrcFileStream, item));
+            }
+
+            if (vTypeName == null)
+                return Array.Empty<SourceSymbol>(); // it's not a var declare, skip
+
+            var declSpecTxt = GetParseNodeFullText(SourceContext.SrcFileStream, declSpec);
 
             var initDeclCtx = context.initDeclaratorList();
 
-            if (initDeclCtx == null)
+            if ((initDeclCtx == null && vNameList.Count == 0) ||
+                (initDeclCtx != null && vNameList.Count != 0))
                 return Array.Empty<SourceSymbol>(); // it's not a var declare, skip
 
-            if (vTypeName == null)
-                vTypeName = SourceSymbol.TYPE_NAME_UNKOWN;
-
-            foreach (var item in initDeclCtx.initDeclarator())
+            if (initDeclCtx != null)
             {
-                var decl = item.declarator().directDeclarator();
+                foreach (var item in initDeclCtx.initDeclarator())
+                {
+                    var decl = item.declarator().directDeclarator();
 
-                if (decl.LeftParen() != null && decl.RightParen() != null)
-                    continue; // it's a function decl, skip
+                    if (decl.LeftParen() != null && decl.RightParen() != null)
+                        continue; // it's a function decl, skip
 
-                var vName = GetIdentifierFromDirectDeclarator(decl).GetText();
-
-                vNameList.Add(vName);
-
-                if (vRefsMap.ContainsKey(vName) == false)
+                    var vName = GetIdentifierFromDirectDeclarator(decl).GetText();
+                    vNameList.Add(vName);
                     vRefsMap.Add(vName, new());
 
-                var initializerCtx = item.initializer();
+                    var initializerCtx = item.initializer();
 
-                if (initializerCtx != null) // parse var references
-                {
-                    var baseExprLi = FindChild<SdccParser.PrimaryExpressionContext>(initializerCtx);
-
-                    foreach (var exprCtx in baseExprLi)
+                    if (initializerCtx != null) // parse var references
                     {
-                        var idf = exprCtx.Identifier();
+                        var baseExprLi = FindChild<SdccParser.PrimaryExpressionContext>(initializerCtx);
 
-                        if (idf != null)
+                        foreach (var exprCtx in baseExprLi)
                         {
-                            vRefsMap[vName].Add(idf.GetText());
+                            var idf = exprCtx.Identifier();
+
+                            if (idf != null)
+                            {
+                                vRefsMap[vName].Add(idf.GetText());
+                            }
                         }
+
+                        initializerMap.Add(vName, GetParseNodeFullText(SourceContext.SrcFileStream, initializerCtx));
                     }
                 }
+            }
+            else // typeName is var name, remove it from type decl text
+            {
+                declSpecTxt = declSpecTxt.Replace(vNameList[0], "").TrimEnd();
             }
 
             List<SourceSymbol> symList = new();
 
-            if (vNameList.Count > 0)
+            foreach (var name in vNameList)
             {
-                foreach (var name in vNameList)
+                var nSym = new SourceSymbol {
+                    name = name,
+                    symType = SourceSymbol.SymbolType.Variable,
+                    declareSpec = declSpecTxt,
+                    typeName = vTypeName,
+                    attrs = vAttrList.ToArray(),
+                    startLocation = context.Start,
+                    stopLocation = context.Stop
+                };
+
+                if (vRefsMap.ContainsKey(name))
                 {
-                    symList.Add(new SourceSymbol {
-                        name = name,
-                        symType = SourceSymbol.SymbolType.Variable,
-                        declareSpec = vDeclSpecTxt,
-                        typeName = vTypeName,
-                        attrs = vAttrList.ToArray(),
-                        refers = vRefsMap[name].ToArray(),
-                        startLocation = context.Start,
-                        stopLocation = context.Stop
-                    });
+                    nSym.refers = vRefsMap[name].ToArray();
                 }
+
+                if (initializerMap.ContainsKey(name))
+                {
+                    nSym.initializer = initializerMap[name];
+                }
+
+                symList.Add(nSym);
             }
 
             return symList.ToArray();
@@ -797,13 +926,13 @@ namespace c_source_splitter
         {
             List<T> result = new();
 
-            Stack<ParserRuleContext> ctxStack = new();
+            Queue<ParserRuleContext> ctxQueue = new();
 
-            ctxStack.Push(rootCtx);
+            ctxQueue.Enqueue(rootCtx);
 
-            while (ctxStack.Count > 0)
+            while (ctxQueue.Count > 0)
             {
-                var ctx = ctxStack.Pop();
+                var ctx = ctxQueue.Dequeue();
 
                 if (ctx is T t)
                 {
@@ -816,7 +945,7 @@ namespace c_source_splitter
                     {
                         if (child is ParserRuleContext c)
                         {
-                            ctxStack.Push(c);
+                            ctxQueue.Enqueue(c);
                         }
                     }
                 }
@@ -827,32 +956,20 @@ namespace c_source_splitter
 
         private delegate bool RuleContextChildWalker<T>(T ctx) where T : ParserRuleContext;
 
-        private static void WalkChild<T>(ParserRuleContext rootCtx, RuleContextChildWalker<T> walker) where T : ParserRuleContext
+        private static void WalkChild<T>(ParserRuleContext ctx, RuleContextChildWalker<T> walker) where T : ParserRuleContext
         {
-            Stack<ParserRuleContext> ctxStack = new();
-
-            ctxStack.Push(rootCtx);
-
-            while (ctxStack.Count > 0)
+            foreach (var child in ctx.children)
             {
-                var ctx = ctxStack.Pop();
-
-                if (ctx is T t)
+                if (child is ParserRuleContext c)
                 {
-                    if (walker(t))
-                        return;
+                    WalkChild(c, walker);
                 }
+            }
 
-                if (ctx.ChildCount > 0)
-                {
-                    foreach (var child in ctx.children)
-                    {
-                        if (child is ParserRuleContext c)
-                        {
-                            ctxStack.Push(c);
-                        }
-                    }
-                }
+            if (ctx is T t)
+            {
+                if (walker(t))
+                    return;
             }
         }
 
@@ -915,7 +1032,16 @@ namespace c_source_splitter
             if (stack.Peek() == ParserStatus.InGlobal)
             {
                 var symLi = ParseVariableDeclare(context);
-                sourceContext.AddRangeSymbol(symLi);
+
+                if (symLi.Length > 0)
+                {
+                    SourceContext.AddRangeSymbol(symLi);
+
+                    if (symLi.Length > 1)
+                    {
+                        SourceContext.AddShareDeclareSymbols(symLi);
+                    }
+                }
             }
         }
 
@@ -1042,7 +1168,7 @@ namespace c_source_splitter
                         vAttrList.Add(funcSpecCtx.GetText());
                     }
 
-                    vFuncDeclSpecTxt = GetParseNodeFullText(sourceContext.SrcFileStream, declSpec);
+                    vFuncDeclSpecTxt = GetParseNodeFullText(SourceContext.SrcFileStream, declSpec);
                 }
             }
 
@@ -1103,7 +1229,7 @@ namespace c_source_splitter
             }
 
             // add to func li
-            sourceContext.AddSymbol(new SourceSymbol {
+            SourceContext.AddSymbol(new SourceSymbol {
                 name = vFuncName,
                 symType = SourceSymbol.SymbolType.Function,
                 typeName = SourceSymbol.TYPE_NAME_UNKOWN,
@@ -1117,12 +1243,12 @@ namespace c_source_splitter
 
         public void SyntaxError(TextWriter output, IRecognizer recognizer, int offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
         {
-            throw new CodeParserException(string.Format("\"{0}\":{1},{2}: LexerError: {3}", sourceContext.SrcFilePath, line, charPositionInLine, msg));
+            throw new CodeParserException(string.Format("\"{0}\":{1},{2}: LexerError: {3}", SourceContext.SrcFilePath, line, charPositionInLine, msg));
         }
 
         public void SyntaxError(TextWriter output, IRecognizer recognizer, IToken offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
         {
-            throw new CodeParserException(string.Format("\"{0}\":{1},{2}: SyntaxError: {3}", sourceContext.SrcFilePath, line, charPositionInLine, msg));
+            throw new CodeParserException(string.Format("\"{0}\":{1},{2}: SyntaxError: {3}", SourceContext.SrcFilePath, line, charPositionInLine, msg));
         }
     }
 }
