@@ -42,6 +42,7 @@ using System.Text.Encodings.Web;
 using System.Text.Unicode;
 using System.Text.RegularExpressions;
 using Antlr4.Runtime.Misc;
+using System.Diagnostics;
 
 namespace c_source_splitter
 {
@@ -209,16 +210,28 @@ namespace c_source_splitter
     {
         public class Options
         {
-            [Option('c', Required = true, HelpText = "compiler id")]
-            public string toolchainSelected { get; set; }
-
-            [Option('d', Required = true, HelpText = "current work folder")]
+            [Option("cwd", Required = true, HelpText = "current work folder")]
             public string workFolder { get; set; }
+
+            [Option("outdir", Required = true, HelpText = "output folder")]
+            public string outputDir { get; set; }
+
+            [Option("compiler", Required = true, HelpText = "compiler name")]
+            public string compilerName { get; set; }
+
+            [Option("compiler-args", Required = true, HelpText = "compiler args")]
+            public string compilerArgs { get; set; }
+
+            [Option("compiler-dir", Required = false, HelpText = "compiler root dir")]
+            public string compilerDir { get; set; }
+
+            [Option("program-entry", Required = false, HelpText = "program entry name")]
+            public string entryName { get; set; }
 
             [Option("test", Required = false, HelpText = "only test source file")]
             public bool onlyTestSourceFile { get; set; }
 
-            [Value(0, Min = 1, Required = true, HelpText = "preprocessed source files")]
+            [Value(0, Min = 1, Max = 1, Required = true, HelpText = "source files")]
             public IEnumerable<string> inputSrcFiles { get; set; }
         }
 
@@ -234,14 +247,17 @@ namespace c_source_splitter
         //
         // global vars
         //
+        public static TextWriter StdOut = Console.Out;
+        public static TextWriter StdErr = Console.Error;
 
         //
         // program entry
         //
+        public static Options cliOptions;
 
         public static int Main(string[] args)
         {
-            Options cliOptions = CommandLine.Parser.Default.ParseArguments<Options>(args).Value;
+            cliOptions = CommandLine.Parser.Default.ParseArguments<Options>(args).Value;
 
             try
             {
@@ -249,18 +265,43 @@ namespace c_source_splitter
                 Environment.CurrentDirectory = cliOptions.workFolder;
 
                 // check supported toolchain
-                if (!gSupportedToolLi.Contains(cliOptions.toolchainSelected.ToLower()))
-                    throw new Exception(string.Format("We not support this toolchain: '{0}'", cliOptions.toolchainSelected));
+                if (!gSupportedToolLi.Contains(cliOptions.compilerName.ToLower()))
+                    throw new Exception(string.Format("We not support this toolchain: '{0}'", cliOptions.compilerName));
+
+                if (cliOptions.compilerDir != null)
+                    Append2SysEnv(cliOptions.compilerDir);
+
+                if (cliOptions.compilerArgs.StartsWith("\""))
+                    cliOptions.compilerArgs = cliOptions.compilerArgs.Trim('"');
+
+                if (cliOptions.entryName == null)
+                    cliOptions.entryName = "main";
 
                 // handle files
-                foreach (var filePath in cliOptions.inputSrcFiles)
+                foreach (var srcFilePath in cliOptions.inputSrcFiles)
                 {
-                    if (!gCsrcFileFilter.IsMatch(filePath)) continue;
+                    // preprocess source file
+                    var fOutPath = RelocatePath(cliOptions.outputDir, srcFilePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(fOutPath));
+                    var cliArgs = "-E " + cliOptions.compilerArgs
+                        .Replace("${in}", string.Format("\"{0}\"", srcFilePath))
+                        .Replace("${out}", string.Format("\"{0}\"", fOutPath));
+                    int eCode = Execute(cliOptions.compilerName, cliArgs, out string allOut, out string stdErr);
+                    StdErr.Write(allOut); // pass compiler out -> stderr
+                    if (eCode != CODE_DONE) return eCode;
+
+                    // split modules
+                    if (!gCsrcFileFilter.IsMatch(fOutPath)) continue;
                     StringWriter sOut = new(), sErr = new();
-                    SourceContext result = ParseSourceFile(filePath, sOut, sErr);
+                    SourceContext result = ParseSourceFile(fOutPath, sOut, sErr);
                     if (cliOptions.onlyTestSourceFile) continue; // if it's test mode, ignore split
                     if (sErr.GetStringBuilder().Length != 0) throw new Exception("Parser Error: " + sErr.ToString());
-                    SplitAndGenerateFiles(result);
+                    var outFiles = SplitAndGenerateFiles(result);
+
+                    // compile modules and output
+                    print("---> " + srcFilePath);
+                    var oLi = CompileModuleFiles(cliOptions.compilerName, cliOptions.compilerArgs, outFiles);
+                    foreach (var p in oLi) print(p);
                 }
             }
             catch (Exception err)
@@ -272,13 +313,50 @@ namespace c_source_splitter
             return CODE_DONE;
         }
 
+        private static string RelocatePath(string outRootDir, string path)
+        {
+            List<string> pList = new(Utility.toUnixPath(path).Split('/'));
+
+            for (int idx = 0; idx < pList.Count; idx++)
+            {
+                if (pList[idx] == "..") pList[idx] = "__";
+                if (pList[idx].EndsWith(":")) pList[idx] = pList[idx].Substring(0, pList[idx].Length - 1);
+            }
+
+            pList.Insert(0, outRootDir);
+
+            pList.RemoveAll(s => s == string.Empty);
+
+            return string.Join(Path.DirectorySeparatorChar, pList);
+        }
+
+        private static string[] CompileModuleFiles(string ccName, string ccArgs, string[] files)
+        {
+            List<string> outFiles = new(64);
+
+            foreach (var path in files)
+            {
+                var fin = path;
+                var fou = Path.ChangeExtension(path, ".rel");
+                var cArgs = ccArgs.Replace("${in}", "\"" + fin + "\"")
+                    .Replace("${out}", "\"" + fou + "\"");
+
+                var exitCode = Execute(ccName, cArgs, out string out_, out string __);
+                StdErr.Write(out_); // pass compiler out -> stderr
+                if (exitCode != CODE_DONE) return null;
+                outFiles.Add(fou);
+            }
+
+            return outFiles.ToArray();
+        }
+
         private struct SymbolReferenceItem
         {
             public string uid;
             public SourceSymbol[] refs;
         };
 
-        private static void SplitAndGenerateFiles(SourceContext ctx)
+        private static string[] SplitAndGenerateFiles(SourceContext ctx)
         {
             string baseName = Path.GetFileNameWithoutExtension(ctx.SrcFilePath);
             string extName = Path.GetExtension(ctx.SrcFilePath) ?? "";
@@ -288,7 +366,11 @@ namespace c_source_splitter
 
             // funcs
             uint NextFileId = 0;
-            var ObtainFileName = () => baseName + "_" + (NextFileId++).ToString() + extName;
+            var ObtainFileName = (bool noId) => {
+                var cuID = NextFileId++;
+                if (noId) return baseName + extName;
+                return baseName + "_" + cuID.ToString() + extName;
+            };
 
             // generate static reference chain
             Dictionary<string, SourceSymbol[]> refLink = new(256);
@@ -442,14 +524,22 @@ namespace c_source_splitter
                 }
             };
 
+            List<string> mFiles = new(64);
+
             foreach (var srcSyms in symGrps)
             {
                 StringBuilder[] srcLines = srcRawLines.Select(l => new StringBuilder(l)).ToArray();
 
-                bool IsInModule_0 = NextFileId == 0;
-                string srcFileName = outDirPath + Path.DirectorySeparatorChar + ObtainFileName();
+                // alloc out file name
 
-                // --- share decl var symbols
+                bool isEntryModule = srcSyms.Any(s => {
+                    return s.symType == SourceSymbol.SymbolType.Function && s.name == cliOptions.entryName;
+                });
+
+                bool IsInModule_0 = NextFileId == 0;
+                string srcFileName = outDirPath + Path.DirectorySeparatorChar + ObtainFileName(isEntryModule);
+
+                // process share decl var symbols
 
                 foreach (var symGrp in ctx.ShareDeclareSymbols)
                 {
@@ -516,7 +606,7 @@ namespace c_source_splitter
                     }
                 }
 
-                // --- normal symbols
+                // process normal symbols
 
                 var bannedSyms = ctx.Symbols.Where(s => !srcSyms.Contains(s) && !ctx.IsShareDeclareSymbol(s.LocationID));
 
@@ -556,11 +646,15 @@ namespace c_source_splitter
                     }
                 }
 
+                // gen files
+
                 var wLines = srcLines.Select(sl => sl.ToString()).ToArray();
                 File.WriteAllLines(srcFileName, wLines);
 
-                print(srcFileName);
+                mFiles.Add(srcFileName);
             }
+
+            return mFiles.ToArray();
         }
 
         private static SourceContext ParseSourceFile(string srcPath, in StringWriter stdOut, in StringWriter stdErr)
@@ -583,6 +677,84 @@ namespace c_source_splitter
             return cListener.SourceContext;
         }
 
+        public static int Execute(string filename, string args,
+            out string allout, out string stderr, Encoding encoding = null)
+        {
+            // if executable is 'cmd.exe', force use ascii
+            if (filename == "cmd" ||
+                filename == "cmd.exe")
+            {
+                encoding = RtEncoding.instance().Default;
+            }
+
+            Process process = new Process();
+            process.StartInfo.FileName = filename;
+            process.StartInfo.Arguments = args;
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.RedirectStandardError = true;
+            process.StartInfo.CreateNoWindow = true;
+            process.StartInfo.StandardOutputEncoding = encoding ?? RtEncoding.instance().Default;
+            process.StartInfo.StandardErrorEncoding = encoding ?? RtEncoding.instance().Default;
+            process.Start();
+
+            StringBuilder _out = new StringBuilder();
+            StringBuilder _err = new StringBuilder();
+
+            process.OutputDataReceived += delegate (object sender, DataReceivedEventArgs e) {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    lock (_out)
+                    {
+                        _out.AppendLine(e.Data);
+                    }
+                }
+            };
+
+            process.ErrorDataReceived += delegate (object sender, DataReceivedEventArgs e) {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    _err.AppendLine(e.Data);
+
+                    lock (_out)
+                    {
+                        _out.AppendLine(e.Data);
+                    }
+                }
+            };
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            process.WaitForExit();
+            int exitCode = process.ExitCode;
+            process.Close();
+
+            allout = _out.ToString();
+            stderr = _err.ToString();
+
+            return exitCode;
+        }
+
+        public static void Append2SysEnv(string value, string keyName = null)
+        {
+            if (keyName == null || keyName.ToLower() == "path")
+            {
+                var sysPathName = OsInfo.instance().OsType == "win32" ? "Path" : "PATH";
+
+                string val = Environment.GetEnvironmentVariable(sysPathName);
+
+                if (val != null) // found path, append it
+                    Environment.SetEnvironmentVariable(sysPathName, value + Path.PathSeparator + val);
+                else // not found, set it
+                    Environment.SetEnvironmentVariable(sysPathName, value);
+
+                return;
+            }
+
+            Environment.SetEnvironmentVariable(keyName, value);
+        }
+
         public static void error(string line, bool newLine = true)
         {
             if (newLine) Console.WriteLine(line);
@@ -595,6 +767,10 @@ namespace c_source_splitter
             else Console.Write(line);
         }
     }
+
+    //////////////////////////////////////////////////////////////////
+    //  parser
+    //////////////////////////////////////////////////////////////////
 
     class SourceSymbol
     {
@@ -1145,9 +1321,18 @@ namespace c_source_splitter
             {
                 WalkChild(context.declarator(), delegate (SdccParser.DirectDeclaratorContext directDeclCtx) {
 
-                    var subDirectDecl = directDeclCtx.directDeclarator();
+                    //
+                    // ANTLR4 grammar for function declare
+                    //
+                    // DirectDeclarator:
+                    // ...
+                    //  |    directDeclarator '(' parameterTypeList ')'
+                    //  |    directDeclarator '(' identifierList? ')'
+                    //
 
-                    if (subDirectDecl != null &&
+                    var child0 = directDeclCtx.GetChild(0); // first child
+
+                    if (child0 is SdccParser.DirectDeclaratorContext subDirectDecl &&
                         directDeclCtx.LeftParen() != null &&
                         directDeclCtx.RightParen() != null) // check func decl, like: 'foo (int a, ...)'
                     {
@@ -1195,7 +1380,7 @@ namespace c_source_splitter
                                 var idfCtx = directDeclCtx.Identifier();
 
                                 if (idfCtx != null &&
-                                    directDeclCtx.ChildCount == 1 && // only have a identifier node
+                                    directDeclCtx.ChildCount == 1 && // only have one identifier node
                                     directDeclCtx.Parent is SdccParser.DeclaratorContext) // parent is declarator
                                 {
                                     vFuncName = idfCtx.GetText();
