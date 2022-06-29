@@ -835,14 +835,16 @@ namespace c_source_splitter
                 vAttrList.Add(nodeTxt);
             }
 
-            var typeSpecs = allChildren.Where(c => c is SdccParser.TypeSpecifierContext).ToArray();
+            var typeSpecs = allChildren.Where(c => {
+                return c is SdccParser.TypeSpecifierContext &&
+                       c.Parent is SdccParser.DeclarationSpecifierContext;
+            }).ToArray();
 
             if (typeSpecs.Length == 0)
                 return Array.Empty<SourceSymbol>(); // not found type, skip
 
+            foreach (var typeSpecCtx in typeSpecs)
             {
-                var typeSpecCtx = typeSpecs[0]; // only get root type spec
-
                 var typeCtx = typeSpecCtx.GetChild(0);
 
                 if (typeCtx is ITerminalNode ||
