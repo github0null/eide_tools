@@ -666,7 +666,9 @@ namespace c_source_splitter
                         DisableSymbolFromTxtLines(srcLines, sym);
 
                         // if not found declare, add it
-                        if (!ctx.FunctionDeclares.Any(s => s.name == sym.name))
+                        // ignore static function
+                        if (!sym.IsStatic &&
+                            !ctx.FunctionDeclares.Any(s => s.name == sym.name))
                         {
                             string txt = sym.declareSpec + ";";
                             srcLines[sym.startLocation.Line - 1].Insert(sym.startLocation.Column, txt);
@@ -1023,7 +1025,18 @@ namespace c_source_splitter
             if (declSpec == null)
                 return Array.Empty<SourceSymbol>(); // skip other declare type
 
-            var allChildren = FindChild<ParserRuleContext>(declSpec);
+            //
+            // ANTLR4 Grammar 
+            //
+            // declarationSpecifier
+            //  :   storageClassSpecifier
+            //  |   typeSpecifier
+            //  |   typeQualifier
+            //  |   functionSpecifier
+            //  |   alignmentSpecifier
+            //  ;
+
+            var allChildren = declSpec.declarationSpecifier().Select(c => (ParserRuleContext)c.GetChild(0));
 
             // parse all specs
 
@@ -1039,10 +1052,7 @@ namespace c_source_splitter
                 vAttrList.Add(nodeTxt);
             }
 
-            var typeSpecs = allChildren.Where(c => {
-                return c is SdccParser.TypeSpecifierContext &&
-                       c.Parent is SdccParser.DeclarationSpecifierContext;
-            }).ToArray();
+            var typeSpecs = allChildren.Where(c => c is SdccParser.TypeSpecifierContext).ToArray();
 
             if (typeSpecs.Length == 0)
                 return Array.Empty<SourceSymbol>(); // not found type, skip
@@ -1083,6 +1093,9 @@ namespace c_source_splitter
                 }
             }
 
+            if (vTypeName == null)
+                return Array.Empty<SourceSymbol>(); // it's not a var declare, skip
+
             var typeQualSpecs = allChildren.Where(c => c is SdccParser.TypeQualifierContext).ToArray();
 
             foreach (var item in typeQualSpecs)
@@ -1096,9 +1109,6 @@ namespace c_source_splitter
             {
                 vAttrList.Add(GetParseNodeFullText(SourceContext.SrcFileStream, item));
             }
-
-            if (vTypeName == null)
-                return Array.Empty<SourceSymbol>(); // it's not a var declare, skip
 
             var declSpecTxt = GetParseNodeFullText(SourceContext.SrcFileStream, declSpec);
 
@@ -1217,7 +1227,7 @@ namespace c_source_splitter
         {
             List<T> result = new();
 
-            Queue<ParserRuleContext> ctxQueue = new();
+            Queue<ParserRuleContext> ctxQueue = new(64);
 
             ctxQueue.Enqueue(rootCtx);
 
@@ -1247,20 +1257,38 @@ namespace c_source_splitter
 
         private delegate bool RuleContextChildWalker<T>(T ctx) where T : ParserRuleContext;
 
-        private static void WalkChild<T>(ParserRuleContext ctx, RuleContextChildWalker<T> walker) where T : ParserRuleContext
+        private static void WalkChild<T>(ParserRuleContext rootCtx, RuleContextChildWalker<T> walker) where T : ParserRuleContext
         {
-            foreach (var child in ctx.children)
+            Queue<ParserRuleContext> ctxQueue = new(64);
+
+            foreach (var child in rootCtx.children)
             {
                 if (child is ParserRuleContext c)
                 {
-                    WalkChild(c, walker);
+                    ctxQueue.Enqueue(c);
                 }
             }
 
-            if (ctx is T t)
+            while (ctxQueue.Count > 0)
             {
-                if (walker(t))
-                    return;
+                var ctx = ctxQueue.Dequeue();
+
+                if (ctx is T t)
+                {
+                    if (walker(t))
+                        return;
+                }
+
+                if (ctx.ChildCount > 0)
+                {
+                    foreach (var child in ctx.children)
+                    {
+                        if (child is ParserRuleContext c)
+                        {
+                            ctxQueue.Enqueue(c);
+                        }
+                    }
+                }
             }
         }
 
@@ -1423,25 +1451,49 @@ namespace c_source_splitter
                 declaratorFullTxt = GetParseNodeFullText(SourceContext.SrcFileStream, declaratorCtx);
 
                 // parse params list
-                var paramsLiCtx = directDeclCtx.parameterTypeList();
-                if (paramsLiCtx != null)
+                var paramsTypeLiCtx = directDeclCtx.parameterTypeList();
+                if (paramsTypeLiCtx != null)
                 {
-                    foreach (var declCtx in FindChild<SdccParser.DeclaratorContext>(paramsLiCtx))
+                    // ANTLR4 Grammar
+                    //
+                    //parameterTypeList
+                    //    :   parameterList (',' '...')?
+                    //    ;
+                    //
+                    //parameterList
+                    //    :   parameterDeclaration (',' parameterDeclaration)*
+                    //    ;
+                    //
+                    //parameterDeclaration
+                    //    :   declarationSpecifiers declarator
+                    //    |   declarationSpecifiers2 abstractDeclarator?
+                    //    ;
+                    //
+                    foreach (var paramDeclCtx in paramsTypeLiCtx.parameterList().parameterDeclaration())
                     {
-                        foreach (var directDeclItem in FindChild<SdccParser.DirectDeclaratorContext>(declCtx))
+                        if (paramDeclCtx.GetChild(1) is SdccParser.DeclaratorContext declCtx)
                         {
-                            var ch = directDeclItem.GetChild(0);
+                            WalkChild(declCtx, delegate (SdccParser.DirectDeclaratorContext directDeclItem) {
 
-                            if (ch is ITerminalNode node &&
-                                node.Symbol.Type == SdccParser.Identifier)
-                            {
-                                localVars.Add(new SourceSymbol {
-                                    name = node.GetText(),
-                                    symType = SourceSymbol.SymbolType.Variable,
-                                    startLocation = directDeclItem.Start,
-                                    stopLocation = directDeclItem.Stop
-                                });
-                            }
+                                var ch = directDeclItem.GetChild(0);
+
+                                if (ch is ITerminalNode node &&
+                                    node.Symbol.Type == SdccParser.Identifier)
+                                {
+                                    localVars.Add(new SourceSymbol {
+                                        name = node.GetText(),
+                                        symType = SourceSymbol.SymbolType.Variable,
+                                        startLocation = directDeclItem.Start,
+                                        stopLocation = directDeclItem.Stop
+                                    });
+
+                                    // if found a identify name in 
+                                    // parameterDeclaration, exit walker
+                                    return true;
+                                }
+
+                                return false;
+                            });
                         }
                     }
                 }

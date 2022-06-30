@@ -2192,6 +2192,10 @@ namespace unify_builder
                             break;
                         case "sdcc":
                             {
+                                // source splitter
+                                ccOutputRender.Add(new Regex(@"(SyntaxError:)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
+
                                 /* compiler */
                                 ccOutputRender.Add(new Regex(@"(warning \d+:|\swarning:\s|^warning:\s)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
