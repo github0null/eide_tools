@@ -15,7 +15,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "serial_monitor", "serial_mo
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "axf2elf", "axf2elf\axf2elf.csproj", "{923698D3-7FE0-469F-BEA3-4BC5F4DE61D2}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "sdcc_source_splitter", "sdcc_source_splitter\sdcc_source_splitter.csproj", "{7C1E5129-5484-4914-8244-6B5E5694FBCB}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "source_splitter", "sdcc_source_splitter\source_splitter.csproj", "{7C1E5129-5484-4914-8244-6B5E5694FBCB}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

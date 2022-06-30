@@ -363,3 +363,4 @@ MigrationBackup/
 FodyWeavers.xsd
 *.interp
 *.tokens
+/unify_builder/Properties/launchSettings.json
