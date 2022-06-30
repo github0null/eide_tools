@@ -360,9 +360,38 @@ parameterList
     :   parameterDeclaration (',' parameterDeclaration)*
     ;
 
+//@deprecated
+//parameterDeclaration
+//    :   declarationSpecifiers declarator
+//    |   declarationSpecifiers2 abstractDeclarator?
+//    ;
+
 parameterDeclaration
-    :   declarationSpecifiers declarator
-    |   declarationSpecifiers2 abstractDeclarator?
+    :   (typeQualifier | parameterTypeSpecifier)+ (declarator | abstractDeclarator)?
+    ;
+
+parameterTypeSpecifier
+    :   ('void'
+    |   '__bit' | '__sbit' | '__sfr' | '__sfr16' | '__sfr32' // for 8051 dat type
+    |   'char'
+    |   'short'
+    |   'int'
+    |   'long'
+    |   'float'
+    |   'double'
+    |   'signed'
+    |   'unsigned'
+    |   '_Bool'
+    |   '_Complex'
+    |   '__m128'
+    |   '__m128d'
+    |   '__m128i')
+    |   '__extension__' '(' ('__m128' | '__m128d' | '__m128i') ')'
+    |   '_Atomic' '(' typeName ')'
+    |   structOrUnion Identifier
+    |   'enum' Identifier
+    |   typedefName
+    |   '__typeof__' '(' constantExpression ')' // GCC extension
     ;
 
 identifierList
@@ -500,9 +529,9 @@ translationUnit
     ;
 
 externalDeclaration
-    :   functionDefinition
+    :   staticAssertDeclaration
+    |   functionDefinition
     |   declaration
-    |   staticAssertDeclaration
     |   ';' // stray ;
     ;
 

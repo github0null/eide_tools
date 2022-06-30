@@ -247,6 +247,8 @@ namespace c_source_splitter
         //
         // global vars
         //
+        public static bool ENABLE_PROFILE = true; // print parser profile info
+
         public static readonly TextWriter StdOut = Console.Out;
         public static readonly TextWriter StdErr = Console.Error;
 
@@ -286,6 +288,8 @@ namespace c_source_splitter
                 // handle files
                 foreach (var srcFilePath in cliOptions.InputSrcFiles)
                 {
+                    List<string> outLines = new(64);
+
                     // preprocess source file
                     var fOutPath = RelocatePath(cliOptions.OutputDir, srcFilePath);
                     Directory.CreateDirectory(Path.GetDirectoryName(fOutPath));
@@ -298,18 +302,20 @@ namespace c_source_splitter
 
                     // split modules
                     if (!gCsrcFileFilter.IsMatch(fOutPath)) continue;
-                    StringWriter sOut = new(), sErr = new();
-                    SourceContext result = ParseSourceFile(fOutPath, sOut, sErr);
+                    StringWriter pStdOut = new(), pStdErr = new();
+                    SourceContext result = ParseSourceFile(fOutPath, pStdOut, pStdErr);
                     if (cliOptions.OnlyTestSourceFile) continue; // if it's test mode, ignore split
-                    if (sErr.GetStringBuilder().Length != 0) throw new Exception("Parser Error: " + sErr.ToString());
+                    if (pStdErr.GetStringBuilder().Length != 0)
+                        throw new Exception("Parser Error: " + pStdErr.ToString());
                     var outFiles = SplitAndGenerateFiles(result);
 
                     // compile modules
-                    List<string> outLines = new(64);
                     outLines.Add("---> " + srcFilePath);
                     if (outFiles.Length == 0) outFiles = new string[] { fOutPath }; // use origin file
                     var oLi = CompileModuleFiles(cliOptions.CompilerName, cliOptions.CompilerArgs, outFiles);
                     foreach (var p in oLi) outLines.Add(p);
+                    outLines.Add("<---");
+                    outLines.Add(pStdOut.GetStringBuilder().ToString());
 
                     // output result
                     foreach (var line in outLines) print(line);
@@ -687,7 +693,7 @@ namespace c_source_splitter
             return mFiles.ToArray();
         }
 
-        private static SourceContext ParseSourceFile(string srcPath, in StringWriter stdOut, in StringWriter stdErr)
+        private static SourceContext ParseSourceFile(string srcPath, StringWriter stdOut, StringWriter stdErr)
         {
             ICharStream input = CharStreams.fromStream(new FileStream(srcPath, FileMode.Open, FileAccess.Read));
 
@@ -702,9 +708,42 @@ namespace c_source_splitter
 
             parser.ErrorHandler = new BailErrorStrategy();
             parser.BuildParseTree = true;
+            parser.Profile = ENABLE_PROFILE;
 
             var ctx = parser.compilationUnit();
             if (ctx.exception != null) throw ctx.exception;
+
+            if (ENABLE_PROFILE)
+            {
+                var print = (string str, bool newLine) => {
+                    if (newLine) stdOut.WriteLine(str);
+                    else stdOut.Write(str);
+                };
+
+                print(string.Format("{0,-" + 35 + "}", "rule"), false);
+                print(string.Format("{0,-" + 15 + "}", "time"), false);
+                print(string.Format("{0,-" + 15 + "}", "invocations"), false);
+                print(string.Format("{0,-" + 15 + "}", "lookahead"), false);
+                print(string.Format("{0,-" + 15 + "}", "lookahead(max)"), false);
+                print(string.Format("{0,-" + 15 + "}", "ambiguities"), false);
+                print(string.Format("{0,-" + 15 + "}", "errors"), true);
+
+                foreach (var decisionInfo in parser.ParseInfo.getDecisionInfo())
+                {
+                    var ds = parser.Atn.GetDecisionState(decisionInfo.decision);
+                    var rule = parser.RuleNames[ds.ruleIndex];
+                    if (decisionInfo.timeInPrediction > 0)
+                    {
+                        print(string.Format("{0,-" + 35 + "}", rule), false);
+                        print(string.Format("{0,-" + 15 + "}", decisionInfo.timeInPrediction), false);
+                        print(string.Format("{0,-" + 15 + "}", decisionInfo.invocations), false);
+                        print(string.Format("{0,-" + 15 + "}", decisionInfo.SLL_TotalLook), false);
+                        print(string.Format("{0,-" + 15 + "}", decisionInfo.SLL_MaxLook), false);
+                        print(string.Format("{0,-" + 15 + "}", decisionInfo.ambiguities.Count), false);
+                        print(string.Format("{0,-" + 15 + "}", decisionInfo.errors.Count), true);
+                    }
+                }
+            }
 
             return cListener.SourceContext;
         }
@@ -1457,22 +1496,14 @@ namespace c_source_splitter
                 {
                     // ANTLR4 Grammar
                     //
-                    //parameterTypeList
-                    //    :   parameterList (',' '...')?
-                    //    ;
-                    //
-                    //parameterList
-                    //    :   parameterDeclaration (',' parameterDeclaration)*
-                    //    ;
-                    //
                     //parameterDeclaration
-                    //    :   declarationSpecifiers declarator
-                    //    |   declarationSpecifiers2 abstractDeclarator?
+                    //    :   (parameterTypeSpecifier | typeQualifier)+ (declarator | abstractDeclarator)?
                     //    ;
                     //
                     foreach (var paramDeclCtx in paramsTypeLiCtx.parameterList().parameterDeclaration())
                     {
-                        if (paramDeclCtx.GetChild(1) is SdccParser.DeclaratorContext declCtx)
+                        if (paramDeclCtx.ChildCount > 1 &&
+                            paramDeclCtx.GetChild(paramDeclCtx.ChildCount - 1) is SdccParser.DeclaratorContext declCtx)
                         {
                             WalkChild(declCtx, delegate (SdccParser.DirectDeclaratorContext directDeclItem) {
 

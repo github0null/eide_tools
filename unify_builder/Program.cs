@@ -3578,7 +3578,9 @@ namespace unify_builder
 
                 if (headerMatched)
                 {
-                    if (!string.IsNullOrWhiteSpace(line))
+                    if (line.StartsWith("<---"))
+                        break; // go end, exit
+                    else if (!string.IsNullOrWhiteSpace(line))
                         res.Add(line);
                 }
                 else

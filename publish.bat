@@ -1,8 +1,12 @@
 @echo off
 
+::echo.
+::echo clean projects ...
+::dotnet clean
+
 :: for win-x64
 echo.
-echo --- for win-x64 ---
+echo --- publish for win-x64 ---
 echo.
 dotnet publish ./eide_tools.sln -o ./dist/win-x64 ^
                -c Release --no-self-contained^
@@ -15,7 +19,7 @@ dotnet publish ./eide_tools.sln -o ./dist/win-x64 ^
 
 :: for linux-x64
 echo.
-echo --- for linux-x64 ---
+echo --- publish for linux-x64 ---
 echo.
 dotnet publish ./eide_tools.sln -o ./dist/linux-x64 ^
                -c Release --no-self-contained^
