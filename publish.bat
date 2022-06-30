@@ -1,6 +1,7 @@
 @echo off
 
 :: for win-x64
+echo.
 echo --- for win-x64 ---
 echo.
 dotnet publish ./eide_tools.sln -o ./dist/win-x64 ^
@@ -13,6 +14,7 @@ dotnet publish ./eide_tools.sln -o ./dist/win-x64 ^
 
 
 :: for linux-x64
+echo.
 echo --- for linux-x64 ---
 echo.
 dotnet publish ./eide_tools.sln -o ./dist/linux-x64 ^

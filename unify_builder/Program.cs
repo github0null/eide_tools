@@ -2618,25 +2618,20 @@ namespace unify_builder
                     compileByMulThread(threads, commands.Values.ToArray(), errLogs);
                 }
 
-                // add all output obj files to linker list
-                // sometimes we can only get the '.obj' count after compilation
-
+                // update objs list if source file have more than one objs
                 foreach (var buildArgs in commands.Values)
                 {
-                    // update objs list
                     if (buildArgs.outputs != null &&
                         buildArgs.outputs.Length > 0)
                     {
-                        if (linkerObjs.ContainsKey(buildArgs.sourcePath))
-                        {
-                            linkerObjs[buildArgs.sourcePath] = buildArgs.outputs
+                        var objLi = buildArgs.outputs
                                 .Select(p => Path.IsPathRooted(p) ? p : (projectRoot + Path.DirectorySeparatorChar + p))
                                 .ToList();
-                        }
+
+                        if (linkerObjs.ContainsKey(buildArgs.sourcePath))
+                            linkerObjs[buildArgs.sourcePath] = objLi;
                         else
-                        {
-                            linkerObjs.Add(buildArgs.sourcePath, buildArgs.outputs.ToList());
-                        }
+                            linkerObjs.Add(buildArgs.sourcePath, objLi);
                     }
                 }
 
