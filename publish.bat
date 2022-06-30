@@ -24,3 +24,6 @@ dotnet publish ./eide_tools.sln -o ./dist/linux-x64 ^
                /property:GenerateFullPaths=true^
                /consoleloggerparameters:NoSummary
 
+echo.
+echo all done !
+echo.

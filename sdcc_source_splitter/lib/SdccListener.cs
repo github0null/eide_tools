@@ -900,14 +900,4 @@ public interface ISdccListener : IParseTreeListener {
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	void ExitFunctionDefinition([NotNull] SdccParser.FunctionDefinitionContext context);
-	/// <summary>
-	/// Enter a parse tree produced by <see cref="SdccParser.declarationList"/>.
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	void EnterDeclarationList([NotNull] SdccParser.DeclarationListContext context);
-	/// <summary>
-	/// Exit a parse tree produced by <see cref="SdccParser.declarationList"/>.
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	void ExitDeclarationList([NotNull] SdccParser.DeclarationListContext context);
 }

@@ -153,7 +153,6 @@ constantExpression
 
 declaration
     :   declarationSpecifiers initDeclaratorList? ';'
-    |   staticAssertDeclaration
     ;
 
 declarationSpecifiers
@@ -450,6 +449,7 @@ blockItemList
 blockItem
     :   statement
     |   declaration
+    |   staticAssertDeclaration
     ;
 
 expressionStatement
@@ -502,15 +502,12 @@ translationUnit
 externalDeclaration
     :   functionDefinition
     |   declaration
+    |   staticAssertDeclaration
     |   ';' // stray ;
     ;
 
 functionDefinition
-    :   declarationSpecifiers? declarator declarationList? compoundStatement
-    ;
-
-declarationList
-    :   declaration+
+    :   declarationSpecifiers? declarator compoundStatement
     ;
 
 Auto : 'auto';

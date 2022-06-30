@@ -700,8 +700,10 @@ namespace c_source_splitter
             parser.AddErrorListener(cListener);
             parser.AddParseListener(cListener);
 
-            var ctx = parser.compilationUnit();
+            parser.ErrorHandler = new BailErrorStrategy();
+            parser.BuildParseTree = true;
 
+            var ctx = parser.compilationUnit();
             if (ctx.exception != null) throw ctx.exception;
 
             return cListener.SourceContext;
@@ -1411,7 +1413,6 @@ namespace c_source_splitter
 
             string declarationSpecifiersFullTxt = null;
             string declaratorFullTxt = null;
-            string declarationListFullTxt = null;
 
             // function local vars
             List<SourceSymbol> localVars = new();
@@ -1519,10 +1520,6 @@ namespace c_source_splitter
                 declarationSpecifiersFullTxt = GetParseNodeFullText(SourceContext.SrcFileStream, declSpec);
             }
 
-            var declarationListCtx = context.declarationList();
-            if (declarationListCtx != null)
-                declarationListFullTxt = GetParseNodeFullText(SourceContext.SrcFileStream, declarationListCtx);
-
             // parse ref
             {
                 var funcBlockCtx = context.compoundStatement().blockItemList();
@@ -1588,9 +1585,6 @@ namespace c_source_splitter
                     funcDeclFullTxt += declarationSpecifiersFullTxt;
 
                 funcDeclFullTxt += " " + declaratorFullTxt;
-
-                if (declarationListFullTxt != null)
-                    funcDeclFullTxt += " " + declarationListFullTxt;
             }
 
             // add to func li

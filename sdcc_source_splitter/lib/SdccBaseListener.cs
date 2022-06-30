@@ -1079,18 +1079,6 @@ public partial class SdccBaseListener : ISdccListener {
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	public virtual void ExitFunctionDefinition([NotNull] SdccParser.FunctionDefinitionContext context) { }
-	/// <summary>
-	/// Enter a parse tree produced by <see cref="SdccParser.declarationList"/>.
-	/// <para>The default implementation does nothing.</para>
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	public virtual void EnterDeclarationList([NotNull] SdccParser.DeclarationListContext context) { }
-	/// <summary>
-	/// Exit a parse tree produced by <see cref="SdccParser.declarationList"/>.
-	/// <para>The default implementation does nothing.</para>
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	public virtual void ExitDeclarationList([NotNull] SdccParser.DeclarationListContext context) { }
 
 	/// <inheritdoc/>
 	/// <remarks>The default implementation does nothing.</remarks>
