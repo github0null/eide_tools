@@ -156,7 +156,7 @@ namespace c_source_splitter
 
         public static bool isAbsolutePath(string path)
         {
-            return Regex.IsMatch(path, @"^(?:[a-z]:|/)", RegexOptions.IgnoreCase);
+            return Path.IsPathRooted(path);
         }
 
         public static string toRelativePath(string root_, string targetPath_, bool useUnixPath = false)
@@ -260,6 +260,7 @@ namespace c_source_splitter
         public static int Main(string[] args)
         {
             cliOptions = CommandLine.Parser.Default.ParseArguments<Options>(args).Value;
+            if (cliOptions == null) return CODE_ERR;
 
             try
             {
@@ -303,16 +304,21 @@ namespace c_source_splitter
                     if (sErr.GetStringBuilder().Length != 0) throw new Exception("Parser Error: " + sErr.ToString());
                     var outFiles = SplitAndGenerateFiles(result);
 
-                    // compile modules and output
-                    print("---> " + srcFilePath);
+                    // compile modules
+                    List<string> outLines = new(64);
+                    outLines.Add("---> " + srcFilePath);
                     if (outFiles.Length == 0) outFiles = new string[] { fOutPath }; // use origin file
                     var oLi = CompileModuleFiles(cliOptions.CompilerName, cliOptions.CompilerArgs, outFiles);
-                    foreach (var p in oLi) print(p);
+                    foreach (var p in oLi) outLines.Add(p);
+
+                    // output result
+                    foreach (var line in outLines) print(line);
+                    File.WriteAllLines(Path.ChangeExtension(fOutPath, ".mods"), outLines);
                 }
             }
             catch (Exception err)
             {
-                error(err.ToString());
+                StdErr.Write(err.ToString());
                 return CODE_ERR;
             }
 
@@ -368,7 +374,10 @@ namespace c_source_splitter
             string extName = Path.GetExtension(ctx.SrcFilePath) ?? "";
             string baseDir = Path.GetDirectoryName(ctx.SrcFilePath);
             if (string.IsNullOrWhiteSpace(baseDir)) baseDir = ".";
-            string outDirPath = baseDir + Path.DirectorySeparatorChar + baseName + extName + ".modules";
+
+            string outDirPath = string.Join(Path.DirectorySeparatorChar, new string[] {
+                baseDir, ".modules", baseName + extName
+            });
 
             // entry name not need declare, add it
             ctx.FunctionDeclares.Add(new SourceSymbol {
@@ -772,12 +781,6 @@ namespace c_source_splitter
             }
 
             Environment.SetEnvironmentVariable(keyName, value);
-        }
-
-        public static void error(string line, bool newLine = true)
-        {
-            if (newLine) Console.WriteLine(line);
-            else Console.Write(line);
         }
 
         public static void print(string line, bool newLine = true)
@@ -1409,38 +1412,40 @@ namespace c_source_splitter
                 if (child_0 is SdccParser.DirectDeclaratorContext funcNameDeclCtx &&
                     child_1 is ITerminalNode t && t.Symbol.Type == SdccParser.LeftParen)
                 {
-                    var paramsLiCtx = directDeclCtx.parameterTypeList();
-
-                    if (paramsLiCtx != null)
-                    {
-                        foreach (var declCtx in FindChild<SdccParser.DeclaratorContext>(paramsLiCtx))
-                        {
-                            foreach (var directDeclItem in FindChild<SdccParser.DirectDeclaratorContext>(declCtx))
-                            {
-                                var ch = directDeclItem.GetChild(0);
-
-                                if (ch is ITerminalNode node &&
-                                    node.Symbol.Type == SdccParser.Identifier)
-                                {
-                                    localVars.Add(new SourceSymbol {
-                                        name = node.GetText(),
-                                        symType = SourceSymbol.SymbolType.Variable,
-                                        startLocation = directDeclItem.Start,
-                                        stopLocation = directDeclItem.Stop
-                                    });
-                                }
-                            }
-                        }
-                    }
-
                     vFuncName = GetIdentifierFromDirectDeclarator(funcNameDeclCtx).GetText();
                 }
 
-                declaratorFullTxt = GetParseNodeFullText(SourceContext.SrcFileStream, declaratorCtx);
-            }
+                // not a func define. exit
+                if (vFuncName == null)
+                    return;
 
-            if (vFuncName == null)
-                return;
+                // get full delare txt
+                declaratorFullTxt = GetParseNodeFullText(SourceContext.SrcFileStream, declaratorCtx);
+
+                // parse params list
+                var paramsLiCtx = directDeclCtx.parameterTypeList();
+                if (paramsLiCtx != null)
+                {
+                    foreach (var declCtx in FindChild<SdccParser.DeclaratorContext>(paramsLiCtx))
+                    {
+                        foreach (var directDeclItem in FindChild<SdccParser.DirectDeclaratorContext>(declCtx))
+                        {
+                            var ch = directDeclItem.GetChild(0);
+
+                            if (ch is ITerminalNode node &&
+                                node.Symbol.Type == SdccParser.Identifier)
+                            {
+                                localVars.Add(new SourceSymbol {
+                                    name = node.GetText(),
+                                    symType = SourceSymbol.SymbolType.Variable,
+                                    startLocation = directDeclItem.Start,
+                                    stopLocation = directDeclItem.Stop
+                                });
+                            }
+                        }
+                    }
+                }
+            }
 
             // get specifiers
             {

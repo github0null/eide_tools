@@ -97,7 +97,7 @@ namespace unify_builder
 
         public static bool isAbsolutePath(string path)
         {
-            return Regex.IsMatch(path, @"^(?:[a-z]:|/)", RegexOptions.IgnoreCase);
+            return Path.IsPathRooted(path);
         }
 
         public static string toRelativePath(string root_, string targetPath_, bool useUnixPath = false)
@@ -1239,9 +1239,13 @@ namespace unify_builder
             string paramsSuffix = ".args.txt";
 
             bool isQuote = true; // quote path which have whitespace
+            bool isSplitterEn = compilerAttr_sdcc_module_split && modelName != "asm";
 
             if (cModel.ContainsKey("$outputSuffix")) outputSuffix = cModel["$outputSuffix"].Value<string>();
             if (cModel.ContainsKey("$quotePath")) isQuote = cModel["$quotePath"].Value<bool>();
+
+            // if use splitter, outpath is a preprocessed .c file
+            if (isSplitterEn) outputSuffix = ".mods";
 
             //--
 
@@ -1342,7 +1346,7 @@ namespace unify_builder
                 {
                     commands.AddRange(compiler_cmds);
 
-                    if (!compilerAttr_sdcc_module_split)
+                    if (!isSplitterEn)
                     {
                         outputFormat = outputFormat
                             .Replace("${out}", toRelativePathForCompilerArgs(outPath, isQuote))
@@ -1357,7 +1361,7 @@ namespace unify_builder
                     commands.Insert(0, toRelativePathForCompilerArgs(fpath));
                     commands.AddRange(compiler_cmds);
 
-                    if (!compilerAttr_sdcc_module_split)
+                    if (!isSplitterEn)
                     {
                         outputFormat = outputFormat
                             .Replace("${out}", toRelativePathForCompilerArgs(outPath, isQuote));
@@ -1396,10 +1400,14 @@ namespace unify_builder
             string compilerArgs = commandLines;
             string exeFullPath = getToolFullPathById(modelName);
 
+            // save raw compiler args
+            FileInfo paramFile = new FileInfo(outName + paramsSuffix);
+            File.WriteAllText(paramFile.FullName, commandLines, encodings[modelName]);
+
+            // if compiler support read args from file
+            // we need to regen compiler args
             if (iFormat.useFile && onlyCmd == false)
             {
-                FileInfo paramFile = new FileInfo(outName + paramsSuffix);
-                File.WriteAllText(paramFile.FullName, commandLines, encodings[modelName]);
                 commandLines = iFormat.body.Replace("${value}", "\"" + paramFile.FullName + "\"");
             }
 
@@ -1414,10 +1422,13 @@ namespace unify_builder
             };
 
             // create cli args for 'compile_commands.json'
-            string shellCmd = "\"" + Program.replaceEnvVariable(exeFullPath) + "\" " + compilerArgs;
-            buildArgs.shellCommand = shellCmd;
+            {
+                buildArgs.shellCommand = "\"" + Program.replaceEnvVariable(exeFullPath) + "\" " + compilerArgs
+                    .Replace("${out}", toRelativePathForCompilerArgs(Path.ChangeExtension(outPath, ".obj"), isQuote))
+                    .Replace("${in}", toRelativePathForCompilerArgs(fpath, isQuote));
+            }
 
-            if (compilerAttr_sdcc_module_split && modelName != "asm")
+            if (isSplitterEn)
             {
                 buildArgs.argsForSplitter = compilerArgs;
             }
@@ -2416,11 +2427,33 @@ namespace unify_builder
                 // some compiler database informations
                 Dictionary<string, string> sourceRefs = new();
                 List<CompileCommandsDataBaseItem> compilerArgsDataBase = new(256);
+                Dictionary<string, List<string>> linkerObjs = new(256);
+
+                var PushLinkerObjs = delegate (CmdGenerator.CmdInfo ccArgs) {
+
+                    // it's a normal obj
+                    if (string.IsNullOrEmpty(ccArgs.argsForSplitter))
+                    {
+                        linkerObjs.Add(ccArgs.sourcePath, new() { ccArgs.outPath });
+                    }
+
+                    // it's a splitted obj, parse from file
+                    else if (File.Exists(ccArgs.outPath))
+                    {
+                        var objLi = parseSourceSplitterOutput(File.ReadAllLines(ccArgs.outPath))
+                            .Select(path => {
+                                return Utility.isAbsolutePath(path) ? path : (projectRoot + Path.DirectorySeparatorChar + path);
+                            }).ToList();
+
+                        linkerObjs.Add(ccArgs.sourcePath, objLi);
+                    }
+                };
 
                 foreach (var cFile in cList)
                 {
                     CmdGenerator.CmdInfo cmdInf = cmdGen.fromCFile(cFile);
                     commands.Add(cmdInf.sourcePath, cmdInf);
+                    PushLinkerObjs(cmdInf);
                     cCount++;
 
                     sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
@@ -2435,6 +2468,7 @@ namespace unify_builder
                 {
                     CmdGenerator.CmdInfo cmdInf = cmdGen.fromAsmFile(asmFile);
                     commands.Add(cmdInf.sourcePath, cmdInf);
+                    PushLinkerObjs(cmdInf);
                     asmCount++;
 
                     sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
@@ -2449,6 +2483,7 @@ namespace unify_builder
                 {
                     CmdGenerator.CmdInfo cmdInf = cmdGen.fromCppFile(cppFile);
                     commands.Add(cmdInf.sourcePath, cmdInf);
+                    PushLinkerObjs(cmdInf);
                     cppCount++;
 
                     sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
@@ -2537,7 +2572,7 @@ namespace unify_builder
                         int exitCode;
                         string ccLog;
 
-                        if (!string.IsNullOrEmpty(cmdInfo.argsForSplitter)) // normal compile
+                        if (string.IsNullOrEmpty(cmdInfo.argsForSplitter)) // normal compile
                         {
                             exitCode = runExe(cmdInfo.exePath, cmdInfo.commandLine, out string ccOut, cmdInfo.outputEncoding);
                             ccLog = ccOut.Trim();
@@ -2556,7 +2591,7 @@ namespace unify_builder
                             string exeArgs = string.Join(" ",
                                 argsLi.Select(str => str.Contains(' ') ? ("\"" + str + "\"") : str).ToArray());
 
-                            exitCode = runExe("source_splitter", exeArgs, out string _,
+                            exitCode = runExe("source_splitter", exeArgs, out string __,
                                 out string resOut, out string ccOut, cmdInfo.outputEncoding);
                             ccLog = ccOut.Trim();
 
@@ -2586,23 +2621,27 @@ namespace unify_builder
                 // add all output obj files to linker list
                 // sometimes we can only get the '.obj' count after compilation
 
-                List<string> linkerFiles = new(256);
-
                 foreach (var buildArgs in commands.Values)
                 {
+                    // update objs list
                     if (buildArgs.outputs != null &&
                         buildArgs.outputs.Length > 0)
                     {
-                        linkerFiles.AddRange(buildArgs.outputs);
-                    }
-                    else
-                    {
-                        linkerFiles.Add(buildArgs.outPath);
+                        if (linkerObjs.ContainsKey(buildArgs.sourcePath))
+                        {
+                            linkerObjs[buildArgs.sourcePath] = buildArgs.outputs
+                                .Select(p => Path.IsPathRooted(p) ? p : (projectRoot + Path.DirectorySeparatorChar + p))
+                                .ToList();
+                        }
+                        else
+                        {
+                            linkerObjs.Add(buildArgs.sourcePath, buildArgs.outputs.ToList());
+                        }
                     }
                 }
 
                 // add all static libs
-                linkerFiles.AddRange(libList);
+                linkerObjs.Add("<global>/libs", libList.ToList());
 
                 // dump old params file after compilation done 
                 // because link operation will always execute, but compilaion not
@@ -2633,7 +2672,8 @@ namespace unify_builder
                     }
                 }
 
-                CmdGenerator.CmdInfo linkInfo = cmdGen.genLinkCommand(linkerFiles);
+                var allObjs = linkerObjs.SelectMany(kv => kv.Value, (kv, item) => item).ToList();
+                CmdGenerator.CmdInfo linkInfo = cmdGen.genLinkCommand(allObjs);
 
                 int linkerExitCode = runExe(linkInfo.exePath, linkInfo.commandLine, out string linkerOut, linkInfo.outputEncoding);
 
@@ -3085,10 +3125,21 @@ namespace unify_builder
 
             mLog.AppendLine();
 
+            string stack_prompt_txt = "";
+
+            // if sseg.size == 1, the stack size is 'MCU_RAM_SIZE - ALLOCATED_RAM_SIZE'
+            // it's 'AUTO STACK SIZE', append a log to prompt it 
+            if (secList.TryGetValue("SSEG", out var ssegInf) &&
+                ssegInf.size == 1)
+            {
+                stack_prompt_txt = ", Stack Size: Auto (MCU_RAM_SIZE - ALLOCATED_RAM_SIZE)";
+            }
+
             int maxPadWidth = (ramSize > romSize ? ramSize : romSize).ToString().Length;
 
             mLog.AppendLine("RAM Total: "
-                + ramSize.ToString().PadRight(maxPadWidth) + " Bytes (" + string.Join(" + ", ramSegLi) + ")");
+                + ramSize.ToString().PadRight(maxPadWidth) + " Bytes (" + string.Join(" + ", ramSegLi) + ")"
+                + stack_prompt_txt);
 
             mLog.AppendLine("ROM Total: "
                 + romSize.ToString().PadRight(maxPadWidth) + " Bytes (" + string.Join(" + ", romSegLi) + ")");
@@ -3513,11 +3564,16 @@ namespace unify_builder
 
         static string[] parseSourceSplitterOutput(string log)
         {
+            return parseSourceSplitterOutput(CRLFMatcher.Split(log));
+        }
+
+        static string[] parseSourceSplitterOutput(IEnumerable<string> lines)
+        {
             List<string> res = new(64);
 
             bool headerMatched = false;
 
-            foreach (var line_ in CRLFMatcher.Split(log))
+            foreach (var line_ in lines)
             {
                 var line = line_.Trim();
 
@@ -3632,7 +3688,7 @@ namespace unify_builder
                         string exeArgs = string.Join(" ",
                             argsLi.Select(str => str.Contains(' ') ? ("\"" + str + "\"") : str).ToArray());
 
-                        exitCode = runExe("source_splitter", exeArgs, out string _,
+                        exitCode = runExe("source_splitter", exeArgs, out string __,
                             out string resultOut, out string ccOut, ccArgs.outputEncoding);
 
                         cclog = ccOut.Trim();
