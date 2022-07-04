@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-// Generated from ./SdAsm.g4 by ANTLR 4.10.1
+// Generated from SdAsm.g4 by ANTLR 4.10.1
 
 // Unreachable code detected
 #pragma warning disable 0162
@@ -204,18 +204,6 @@ public partial class SdAsmBaseListener : ISdAsmListener {
 	/// <param name="context">The parse tree.</param>
 	public virtual void ExitExpr([NotNull] SdAsmParser.ExprContext context) { }
 	/// <summary>
-	/// Enter a parse tree produced by <see cref="SdAsmParser.bitOperationExpr"/>.
-	/// <para>The default implementation does nothing.</para>
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	public virtual void EnterBitOperationExpr([NotNull] SdAsmParser.BitOperationExprContext context) { }
-	/// <summary>
-	/// Exit a parse tree produced by <see cref="SdAsmParser.bitOperationExpr"/>.
-	/// <para>The default implementation does nothing.</para>
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	public virtual void ExitBitOperationExpr([NotNull] SdAsmParser.BitOperationExprContext context) { }
-	/// <summary>
 	/// Enter a parse tree produced by <see cref="SdAsmParser.operand"/>.
 	/// <para>The default implementation does nothing.</para>
 	/// </summary>
@@ -251,6 +239,18 @@ public partial class SdAsmBaseListener : ISdAsmListener {
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	public virtual void ExitArithmeticOperator([NotNull] SdAsmParser.ArithmeticOperatorContext context) { }
+	/// <summary>
+	/// Enter a parse tree produced by <see cref="SdAsmParser.unaryOperator"/>.
+	/// <para>The default implementation does nothing.</para>
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	public virtual void EnterUnaryOperator([NotNull] SdAsmParser.UnaryOperatorContext context) { }
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="SdAsmParser.unaryOperator"/>.
+	/// <para>The default implementation does nothing.</para>
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	public virtual void ExitUnaryOperator([NotNull] SdAsmParser.UnaryOperatorContext context) { }
 	/// <summary>
 	/// Enter a parse tree produced by <see cref="SdAsmParser.assignmentOperator"/>.
 	/// <para>The default implementation does nothing.</para>

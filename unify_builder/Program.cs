@@ -1717,6 +1717,8 @@ namespace unify_builder
         public static readonly int CODE_ERR = 1;
         public static readonly int CODE_DONE = 0;
 
+        public static readonly string sdcc_asm_optimizer = "sdcc_asm_optimizer";
+
         // minimum amount of files to enable multi-thread compilation
         static readonly int minFilesNumsForMultiThread = 8;
 
@@ -2586,7 +2588,6 @@ namespace unify_builder
                             string[] argsLi = {
                                 "--cwd", projectRoot,
                                 "--outdir", Utility.toRelativePath(projectRoot, outDir) ?? outDir,
-                                "--compiler", cmdInfo.compilerId,
                                 "--compiler-args", "\\\"" + cmdInfo.argsForSplitter + "\\\"",
                                 "--compiler-dir", curEnvs["TOOL_DIR"] + Path.DirectorySeparatorChar + "bin",
                                 Utility.toRelativePath(projectRoot, cmdInfo.sourcePath) ?? outDir
@@ -2595,7 +2596,7 @@ namespace unify_builder
                             string exeArgs = string.Join(" ",
                                 argsLi.Select(str => str.Contains(' ') ? ("\"" + str + "\"") : str).ToArray());
 
-                            exitCode = runExe("source_splitter", exeArgs, out string __,
+                            exitCode = runExe(sdcc_asm_optimizer, exeArgs, out string __,
                                 out string resOut, out string ccOut, cmdInfo.outputEncoding);
                             ccLog = ccOut.Trim();
 
@@ -3680,7 +3681,6 @@ namespace unify_builder
                         string[] argsLi = {
                             "--cwd", projectRoot,
                             "--outdir", Utility.toRelativePath(projectRoot, outDir) ?? outDir,
-                            "--compiler", ccArgs.compilerId,
                             "--compiler-args", "\\\"" + ccArgs.argsForSplitter + "\\\"",
                             "--compiler-dir", curEnvs["TOOL_DIR"] + Path.DirectorySeparatorChar + "bin",
                             Utility.toRelativePath(projectRoot, ccArgs.sourcePath) ?? outDir
@@ -3689,7 +3689,7 @@ namespace unify_builder
                         string exeArgs = string.Join(" ",
                             argsLi.Select(str => str.Contains(' ') ? ("\"" + str + "\"") : str).ToArray());
 
-                        exitCode = runExe("source_splitter", exeArgs, out string __,
+                        exitCode = runExe(sdcc_asm_optimizer, exeArgs, out string __,
                             out string resultOut, out string ccOut, ccArgs.outputEncoding);
 
                         cclog = ccOut.Trim();

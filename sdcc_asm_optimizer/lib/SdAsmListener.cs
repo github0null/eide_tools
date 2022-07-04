@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-// Generated from ./SdAsm.g4 by ANTLR 4.10.1
+// Generated from SdAsm.g4 by ANTLR 4.10.1
 
 // Unreachable code detected
 #pragma warning disable 0162
@@ -171,16 +171,6 @@ public interface ISdAsmListener : IParseTreeListener {
 	/// <param name="context">The parse tree.</param>
 	void ExitExpr([NotNull] SdAsmParser.ExprContext context);
 	/// <summary>
-	/// Enter a parse tree produced by <see cref="SdAsmParser.bitOperationExpr"/>.
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	void EnterBitOperationExpr([NotNull] SdAsmParser.BitOperationExprContext context);
-	/// <summary>
-	/// Exit a parse tree produced by <see cref="SdAsmParser.bitOperationExpr"/>.
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	void ExitBitOperationExpr([NotNull] SdAsmParser.BitOperationExprContext context);
-	/// <summary>
 	/// Enter a parse tree produced by <see cref="SdAsmParser.operand"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -210,6 +200,16 @@ public interface ISdAsmListener : IParseTreeListener {
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	void ExitArithmeticOperator([NotNull] SdAsmParser.ArithmeticOperatorContext context);
+	/// <summary>
+	/// Enter a parse tree produced by <see cref="SdAsmParser.unaryOperator"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void EnterUnaryOperator([NotNull] SdAsmParser.UnaryOperatorContext context);
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="SdAsmParser.unaryOperator"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void ExitUnaryOperator([NotNull] SdAsmParser.UnaryOperatorContext context);
 	/// <summary>
 	/// Enter a parse tree produced by <see cref="SdAsmParser.assignmentOperator"/>.
 	/// </summary>

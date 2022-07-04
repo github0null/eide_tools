@@ -15,9 +15,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "serial_monitor", "serial_mo
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "axf2elf", "axf2elf\axf2elf.csproj", "{923698D3-7FE0-469F-BEA3-4BC5F4DE61D2}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "source_splitter", "sdcc_source_splitter\source_splitter.csproj", "{7C1E5129-5484-4914-8244-6B5E5694FBCB}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "sdcc_asm_optimizer", "sdcc_asm_optimizer\sdcc_asm_optimizer.csproj", "{4F4F27EB-8421-4A90-A2D7-BC0749C4387D}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "sdcc_asm_optimizer", "sdcc_asm_optimizer\sdcc_asm_optimizer.csproj", "{4F4F27EB-8421-4A90-A2D7-BC0749C4387D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -37,10 +35,6 @@ Global
 		{923698D3-7FE0-469F-BEA3-4BC5F4DE61D2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{923698D3-7FE0-469F-BEA3-4BC5F4DE61D2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{923698D3-7FE0-469F-BEA3-4BC5F4DE61D2}.Release|Any CPU.Build.0 = Release|Any CPU
-		{7C1E5129-5484-4914-8244-6B5E5694FBCB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{7C1E5129-5484-4914-8244-6B5E5694FBCB}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{7C1E5129-5484-4914-8244-6B5E5694FBCB}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{7C1E5129-5484-4914-8244-6B5E5694FBCB}.Release|Any CPU.Build.0 = Release|Any CPU
 		{4F4F27EB-8421-4A90-A2D7-BC0749C4387D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{4F4F27EB-8421-4A90-A2D7-BC0749C4387D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4F4F27EB-8421-4A90-A2D7-BC0749C4387D}.Release|Any CPU.ActiveCfg = Release|Any CPU

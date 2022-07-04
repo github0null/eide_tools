@@ -79,7 +79,17 @@ namespace sdcc_asm_optimizer
         public static readonly int CODE_DONE = 0;
 
         static readonly Regex cSourceMatcher = new(@"\.(c)$", RegexOptions.IgnoreCase | RegexOptions.Compiled); // file filters
-        static readonly string[] gSupportedToolLi = { "sdcc" }; // supported list
+
+        static readonly Dictionary<string, string> AssemblerMap = new() {
+            { "mcs51", "8051" },
+            { "ds390", "390" },
+            { "ds400", "390" },
+            { "hc08", "6808" },
+            { "s08", "6808" },
+            { "r2k", "rab" },
+            { "gbz80", "gb" },
+            { "ez80_z80", "z80" }
+        };
 
         //
         // global vars
@@ -107,10 +117,6 @@ namespace sdcc_asm_optimizer
                 // set current workspace
                 Environment.CurrentDirectory = cliOptions.WorkFolder;
 
-                // check supported toolchain
-                if (!gSupportedToolLi.Contains(compilerName))
-                    throw new Exception(string.Format("We not support this toolchain: '{0}'", compilerName));
-
                 if (cliOptions.CompilerDir != null)
                     Append2SysEnv(cliOptions.CompilerDir);
 
@@ -120,9 +126,15 @@ namespace sdcc_asm_optimizer
                 if (cliOptions.EntryName == null)
                     cliOptions.EntryName = "main";
 
-                // filter source file
-                cliOptions.InputSrcFiles = cliOptions.InputSrcFiles
-                    .Where(p => cSourceMatcher.IsMatch(p));
+                var incompatibleSrcFiles = cliOptions.InputSrcFiles
+                    .Any(p => !cSourceMatcher.IsMatch(p));
+
+                if (incompatibleSrcFiles)
+                {
+                    var fLi = cliOptions.InputSrcFiles.ToList();
+                    var fIdx = fLi.FindIndex(p => !cSourceMatcher.IsMatch(p));
+                    throw new Exception(string.Format("we not support this source file: '{0}'", fLi[fIdx]));
+                }
 
                 // handle files
                 foreach (var srcFilePath in cliOptions.InputSrcFiles)
@@ -141,16 +153,16 @@ namespace sdcc_asm_optimizer
 
                     // split modules
                     StringWriter pStdOut = new(), pStdErr = new();
-                    SourceContext result = ParseSourceFile(fOutPath, pStdOut, pStdErr);
+                    SourceContext parserCtx = ParseSourceFile(fOutPath, pStdOut, pStdErr);
                     if (cliOptions.OnlyTestSourceFile) continue; // if it's test mode, ignore split
                     if (pStdErr.GetStringBuilder().Length != 0)
                         throw new Exception("Parser Error: " + pStdErr.ToString());
-                    var outFiles = SplitAndGenerateFiles(result);
+                    var outFiles = SplitAndGenerateFiles(parserCtx);
 
                     // compile modules
                     outLines.Add("---> " + srcFilePath);
                     if (outFiles.Length == 0) outFiles = new string[] { fOutPath }; // use origin file
-                    var oLi = CompileModuleFiles(compilerName, cliOptions.CompilerArgs, outFiles);
+                    var oLi = CompileModuleFiles(parserCtx.assemblerName, outFiles);
                     foreach (var p in oLi) outLines.Add(p);
                     outLines.Add("<---");
                     outLines.Add(pStdOut.GetStringBuilder().ToString());
@@ -187,18 +199,27 @@ namespace sdcc_asm_optimizer
             return string.Join(Path.DirectorySeparatorChar, pList);
         }
 
-        private static string[] CompileModuleFiles(string ccName, string ccArgs, string[] files)
+        private static string[] CompileModuleFiles(string assemblerName, string[] files)
         {
             List<string> outFiles = new(64);
+
+            string assembler = assemblerName;
+
+            // remap assembler name
+            if (AssemblerMap.ContainsKey(assemblerName))
+            {
+                assembler = AssemblerMap[assemblerName];
+            }
 
             foreach (var path in files)
             {
                 var fin = path;
                 var fou = Path.ChangeExtension(path, objSuffix);
-                var cArgs = ccArgs.Replace("${in}", "\"" + fin + "\"")
+                var asArgs = "-plosgffw ${out} ${in}"
+                    .Replace("${in}", "\"" + fin + "\"")
                     .Replace("${out}", "\"" + fou + "\"");
 
-                var exitCode = Execute(ccName, cArgs, out string out_, out string __);
+                var exitCode = Execute("sdas" + assembler, asArgs, out string out_, out string __);
                 StdErr.Write(out_); // pass compiler out -> stderr
                 if (exitCode != CODE_DONE) throw new Exception("compile error at: " + fin);
                 outFiles.Add(fou);
@@ -207,7 +228,7 @@ namespace sdcc_asm_optimizer
             return outFiles.ToArray();
         }
 
-        private struct SymbolReferenceItem
+        struct SymbolReferenceItem
         {
             public string uid;
             public SourceSymbol[] refs;
@@ -226,82 +247,184 @@ namespace sdcc_asm_optimizer
 
             Directory.CreateDirectory(outDirPath);
 
-            var funcSyms = ctx.globalFuncSyms.ToList();
+            // make static ref chain
 
-            // make entry func at the first
+            List<SymbolReferenceItem> staticRefs = new(64);
 
-            var entryIdx = funcSyms.FindIndex(c => c.name == "_" + cliOptions.EntryName);
-            var IsEntrySourceFile = entryIdx != -1;
-            if (IsEntrySourceFile)
+            foreach (var curSym in ctx.globalFuncSyms)
             {
-                var s = funcSyms[entryIdx];
-                funcSyms.RemoveAt(entryIdx);
-                funcSyms.Insert(0, s);
+                List<SourceSymbol> curRefs = new(64);
+                List<SourceSymbol> refSyms = new(64);
+
+                foreach (var refName in curSym.refs)
+                {
+                    if (curSym.name == refName)
+                        continue; // skip loop self ref
+
+                    refSyms.AddRange(ctx.FindSymbols(refName));
+                }
+
+                Stack<SourceSymbol> symStk = new(refSyms);
+
+                while (symStk.Count > 0)
+                {
+                    var s = symStk.Pop();
+
+                    // if it's global sym, ignore it
+                    // we only need to handle static reference
+                    if (!ctx.IsStatic(s.UID))
+                        continue;
+
+                    curRefs.Add(s);
+
+                    foreach (var n in s.refs)
+                    {
+                        if (s.name == n)
+                            continue; // skip loop self ref
+
+                        foreach (var item in ctx.FindSymbols(n))
+                        {
+                            symStk.Push(item);
+                        }
+                    }
+                }
+
+                staticRefs.Add(new SymbolReferenceItem() {
+                    uid = curSym.UID,
+                    refs = curRefs.Distinct().ToArray()
+                });
+            }
+
+            staticRefs.Sort((a, b) => b.refs.Length - a.refs.Length);
+
+            // make symbol group
+
+            List<List<SourceSymbol>> symGrps = new(128);
+
+            Func<SourceSymbol, int> FindResolvedGrpIdx = delegate (SourceSymbol sym) {
+                return symGrps.FindIndex((symLi) => symLi.Contains(sym));
+            };
+
+            foreach (var symInfo in staticRefs)
+            {
+                var rootSym = ctx.GetSymbol(symInfo.uid);
+
+                if (FindResolvedGrpIdx(rootSym) != -1)
+                    continue;
+
+                if (rootSym.symType == SymbolType.Variable &&
+                    ctx.IsStatic(rootSym.UID) == false)
+                    continue; // ignore global variables, it's extern
+
+                List<SourceSymbol> curSyms = new();
+
+                // add root
+                curSyms.Add(rootSym);
+
+                int expectedGrpIdx = -1;
+
+                // add refs
+                foreach (var refedSym in symInfo.refs)
+                {
+                    var conflictIdx = FindResolvedGrpIdx(refedSym);
+
+                    // If have cross references, merge group
+                    // In general, this branch is unreachable
+                    if (conflictIdx != -1 && expectedGrpIdx != -1 &&
+                        conflictIdx != expectedGrpIdx)
+                    {
+                        var n = symGrps[conflictIdx].Union(symGrps[expectedGrpIdx]).ToList();
+                        symGrps = symGrps
+                            .Where((li, idx) => { return idx != conflictIdx && idx != expectedGrpIdx; })
+                            .ToList();
+                        expectedGrpIdx = conflictIdx = -1;
+                        curSyms = n.Union(curSyms).ToList();
+                    }
+
+                    if (conflictIdx != -1)
+                        expectedGrpIdx = conflictIdx;
+
+                    curSyms.Add(refedSym);
+                }
+
+                if (expectedGrpIdx != -1)
+                    symGrps[expectedGrpIdx].AddRange(curSyms);
+                else
+                    symGrps.Add(curSyms);
+            }
+
+            // del repeat
+            for (int i = 0; i < symGrps.Count; i++)
+            {
+                symGrps[i] = symGrps[i].Distinct().ToList();
             }
 
             // generate files
 
             List<string> mFiles = new();
 
-            string[] srcRawLines = File.ReadAllLines(ctx.SrcFilePath);
-
-            int ModuleId = 0;
-            var ObtainFileName = (bool noId) => {
-                var cuID = ModuleId++;
-                if (noId) return baseName + extName;
-                return baseName + "_" + cuID.ToString() + extName;
-            };
-
-            var DisableLines = (StringBuilder[] lines, int startIdx, int stopIdx) => {
-                for (int i = startIdx; i < stopIdx + 1; i++) lines[i].Insert(0, ';');
-            };
-
-            foreach (var curSym in funcSyms)
+            foreach (var funcSyms in symGrps)
             {
-                bool IsInModule_0 = ModuleId == 0;
-                bool IsEntryModule = IsInModule_0 && IsEntrySourceFile;
+                string[] srcRawLines = File.ReadAllLines(ctx.SrcFilePath);
 
-                // prepare files
+                int ModuleId = 0;
+                var ObtainFileName = (bool noId) => {
+                    var cuID = ModuleId++;
+                    if (noId) return baseName + extName;
+                    return baseName + "_" + cuID.ToString() + extName;
+                };
 
-                int CurModuleId = ModuleId;
-                string srcFileName = outDirPath + Path.DirectorySeparatorChar + ObtainFileName(IsEntryModule);
-                StringBuilder[] srcLines = srcRawLines.Select(l => new StringBuilder(l)).ToArray();
+                var DisableLines = (StringBuilder[] lines, int startIdx, int stopIdx) => {
+                    for (int i = startIdx; i < stopIdx + 1; i++) lines[i].Insert(0, ';');
+                };
 
-                // rename module name
-
-                if (!IsEntryModule)
+                foreach (var curSym in funcSyms)
                 {
-                    srcLines[ctx.moduleHeaderLine].Replace(ctx.moduleName, ctx.moduleName + "_" + CurModuleId);
-                }
+                    bool IsInModule_0 = ModuleId == 0;
+                    bool IsEntryModule = IsInModule_0 && IsEntrySourceFile;
 
-                // del syms
+                    // prepare files
 
-                if (IsInModule_0) // only ban func syms in module[0]
-                {
-                    foreach (var bannedSym in ctx.globalFuncSyms.Where(s => s.UID != curSym.UID))
+                    int CurModuleId = ModuleId;
+                    string srcFileName = outDirPath + Path.DirectorySeparatorChar + ObtainFileName(IsEntryModule);
+                    StringBuilder[] srcLines = srcRawLines.Select(l => new StringBuilder(l)).ToArray();
+
+                    // rename module name
+
+                    if (!IsEntryModule)
                     {
-                        DisableLines(srcLines, bannedSym.startLine, bannedSym.stopLine);
-                    }
-                }
-                else // ban non-self syms in module[1..n]
-                {
-                    foreach (var bannedSym in ctx.symbols.Where(s => s.UID != curSym.UID))
-                    {
-                        DisableLines(srcLines, bannedSym.startLine, bannedSym.stopLine);
+                        srcLines[ctx.moduleHeaderLine].Replace(ctx.moduleName, ctx.moduleName + "_" + CurModuleId);
                     }
 
-                    foreach (var lineIdx in ctx.isolatedStatementLines)
+                    // del syms
+
+                    if (IsInModule_0) // only ban func syms in module[0]
                     {
-                        DisableLines(srcLines, lineIdx, lineIdx);
+                        foreach (var bannedSym in ctx.globalFuncSyms.Where(s => s.UID != curSym.UID))
+                        {
+                            DisableLines(srcLines, bannedSym.startLine, bannedSym.stopLine);
+                        }
                     }
+                    else // ban non-self syms in module[1..n]
+                    {
+                        foreach (var bannedSym in ctx.symbols.Where(s => s.UID != curSym.UID))
+                        {
+                            DisableLines(srcLines, bannedSym.startLine, bannedSym.stopLine);
+                        }
+
+                        foreach (var lineIdx in ctx.isolatedStatementLines)
+                        {
+                            DisableLines(srcLines, lineIdx, lineIdx);
+                        }
+                    }
+
+                    // gen files
+
+                    var wLines = srcLines.Select(sl => sl.ToString()).ToArray();
+                    File.WriteAllLines(srcFileName, wLines);
+
+                    mFiles.Add(srcFileName);
                 }
-
-                // gen files
-
-                var wLines = srcLines.Select(sl => sl.ToString()).ToArray();
-                File.WriteAllLines(srcFileName, wLines);
-
-                mFiles.Add(srcFileName);
             }
 
             return mFiles.ToArray();
@@ -514,11 +637,15 @@ namespace sdcc_asm_optimizer
 
         public int moduleHeaderLine = -1;
 
+        public string assemblerName = null;
+
         public SourceSymbol[] symbols = null;
 
         public SourceSymbol[] globalSymbols = null;
 
         public SourceSymbol[] globalFuncSyms = null;
+
+        public SourceSymbol[] globalVarSyms = null;
 
         public int[] isolatedStatementLines = null;
 
@@ -528,10 +655,30 @@ namespace sdcc_asm_optimizer
             this.SrcFileStream = SrcFileStream;
         }
 
+        public IEnumerable<SourceSymbol> FindSymbols(string name)
+        {
+            return symbols.Where(s => s.name == name);
+        }
+
+        public SourceSymbol GetSymbol(string uid)
+        {
+            var idx = Array.FindIndex(symbols, s => s.UID == uid);
+            return idx != -1 ? symbols[idx] : null;
+        }
+
+        public bool IsStatic(string uid)
+        {
+            return !globalSymbols.Any(s => s.UID == uid);
+        }
+
         public void Commit()
         {
             globalFuncSyms = symbols
                 .Where(s => s.symType == SymbolType.Function && globalSymbols.Contains(s))
+                .ToArray();
+
+            globalVarSyms = symbols
+                .Where(s => s.symType != SymbolType.Function && globalSymbols.Contains(s))
                 .ToArray();
         }
     }
@@ -543,6 +690,8 @@ namespace sdcc_asm_optimizer
             public string module;
 
             public int moduleHeaderLine = -1;
+
+            public string assemblerOpts = null;
 
             public List<string> globalSymbols = new(64);
 
@@ -599,6 +748,7 @@ namespace sdcc_asm_optimizer
                 srcCtx.symbols = this.symbols.Distinct().ToArray();
                 srcCtx.globalSymbols = symbols.Where(s => this.globalSymbols.Contains(s.name)).ToArray();
                 srcCtx.isolatedStatementLines = this.isolatedStatementLines.ToArray();
+                srcCtx.assemblerName = Regex.Replace(this.assemblerOpts, @".*?\s*-m(?<name>\w+)\s*.*", "${name}");
                 srcCtx.Commit();
             }
         }
@@ -663,43 +813,6 @@ namespace sdcc_asm_optimizer
             return result.ToArray();
         }
 
-        private delegate bool RuleContextChildWalker<T>(T ctx) where T : ParserRuleContext;
-
-        private static void WalkChild<T>(ParserRuleContext rootCtx, RuleContextChildWalker<T> walker) where T : ParserRuleContext
-        {
-            Queue<ParserRuleContext> ctxQueue = new(64);
-
-            foreach (var child in rootCtx.children)
-            {
-                if (child is ParserRuleContext c)
-                {
-                    ctxQueue.Enqueue(c);
-                }
-            }
-
-            while (ctxQueue.Count > 0)
-            {
-                var ctx = ctxQueue.Dequeue();
-
-                if (ctx is T t)
-                {
-                    if (walker(t))
-                        return;
-                }
-
-                if (ctx.ChildCount > 0)
-                {
-                    foreach (var child in ctx.children)
-                    {
-                        if (child is ParserRuleContext c)
-                        {
-                            ctxQueue.Enqueue(c);
-                        }
-                    }
-                }
-            }
-        }
-
         /////////////////////////////////// parser //////////////////////////////////////////
 
         public override void ExitSegment([NotNull] SdAsmParser.SegmentContext context)
@@ -719,6 +832,9 @@ namespace sdcc_asm_optimizer
                     break;
                 case "area":
                     AsmSrcContext.segment = context.segmentSpec().GetToken(SdAsmParser.Identifier, 0).GetText();
+                    break;
+                case "optsdcc":
+                    AsmSrcContext.assemblerOpts = GetFullTextByCtx(context.segmentSpec());
                     break;
                 default:
                     break;

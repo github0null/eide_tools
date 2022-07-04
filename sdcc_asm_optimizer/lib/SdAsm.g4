@@ -1,3 +1,7 @@
+//
+// ASxxxx syntax reference: https://shop-pdp.net/ashtml/asxs01.htm#Symbols
+//
+
 grammar SdAsm;
 
 asmFile
@@ -65,23 +69,22 @@ expressions
     ;
 
 expr
-    : operand? operator operand
-    | bitOperationExpr
+    : expr operator expr
+    | operator operand
+    | operand '.' Number
     | operand
-    | ('#' | Number)? '(' expressions+ ')'
-    ;
-
-bitOperationExpr
-    : operand '.' Number ',' operand
+    | ('#' unaryOperator? | unaryOperator | Number)? '(' expressions+ ')'
     ;
 
 operand
     : Number
     | '#'? '@'? (normalLabel | inlineLabel)
+    | '.'
     ;
 
 operator
     : arithmeticOperator
+    | unaryOperator
     | bitOperator
     | compareOperator
     | logicalOperator
@@ -89,12 +92,16 @@ operator
     ;
 
 arithmeticOperator
-    : '+' | '-' 
+    : '+' | '-' | '*' | '/' | '%'
+    ;
+
+unaryOperator
+    : '<' | '>' | '\'' | '"' | '\\'
+    // repeat ops: '+' | '-' | '~' 
     ;
 
 assignmentOperator
-    : '=' 
-    // ignore this for asm: | '+=' | '-=' | '*=' | '/=' | '%=' | '<<=' | '>>=' | '&=' | '|=' | '~=' | '^=' 
+    : '=' | '=:' | '=='
     ;
 
 bitOperator
@@ -102,7 +109,7 @@ bitOperator
     ;
 
 compareOperator
-    : '==' | '!=' | '>' | '>=' | '<' | '<=' 
+    : '!=' | '>' | '>=' | '<' | '<=' 
     ;
 
 logicalOperator
@@ -196,7 +203,7 @@ SegmentType: 'module' | 'optsdcc' | 'globl' | 'area';
 
 DataType: 'ascii' | 'byte' | 'db' | 'ds' | 'dw' | 'dd';
 
-Number: '#'? '-'? ([0-9]+ | '0x' HexadecimalDigit+);
+Number: '#'? '-'? ([0-9]+ | ('0' [xXhHbBoOqQdD] | '$%' | '$&' | '$#' | '$$') HexadecimalDigit+);
 
 Identifier: [a-zA-Z_$] [0-9a-zA-Z_$]*;
 
