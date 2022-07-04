@@ -16,7 +16,7 @@ codeLine
     ;
 
 segment
-    : '.' SegmentName segmentSpec
+    : '.' SegmentType segmentSpec
     ;
 
 segmentSpec
@@ -192,7 +192,7 @@ CRLF: '\r'? '\n';
 
 // identifiers
 
-SegmentName: 'module' | 'optsdcc' | 'globl' | 'area';
+SegmentType: 'module' | 'optsdcc' | 'globl' | 'area';
 
 DataType: 'ascii' | 'byte' | 'db' | 'ds' | 'dw' | 'dd';
 

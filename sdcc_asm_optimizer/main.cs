@@ -48,16 +48,15 @@ namespace sdcc_asm_optimizer
 {
     class Program
     {
-
         public class Options
         {
-            [Option("cwd", Required = true, HelpText = "current work folder")]
+            [Option('w', "cwd", Required = true, HelpText = "current work folder")]
             public string WorkFolder { get; set; }
 
-            [Option("outdir", Required = true, HelpText = "output root folder")]
+            [Option('o', "outdir", Required = true, HelpText = "output root folder")]
             public string OutputDir { get; set; }
 
-            [Option("compiler", Required = true, HelpText = "compiler name")]
+            [Option('c', "compiler", Required = true, HelpText = "compiler name")]
             public string CompilerName { get; set; }
 
             [Option("compiler-args", Required = true, HelpText = "compiler args")]
@@ -69,7 +68,7 @@ namespace sdcc_asm_optimizer
             [Option("program-entry", Required = false, HelpText = "program entry name")]
             public string EntryName { get; set; }
 
-            [Option("test", Required = false, HelpText = "only test source file")]
+            [Option('t', "test", Required = false, HelpText = "only test source file")]
             public bool OnlyTestSourceFile { get; set; }
 
             [Value(0, Min = 1, Max = 1, Required = true, HelpText = "source files with relative path")]
@@ -138,7 +137,7 @@ namespace sdcc_asm_optimizer
                     // preprocess source file: '.c' -> '.asm'
                     var fOutPath = Path.ChangeExtension(RelocatePath(cliOptions.OutputDir, srcFilePath), ".asm");
                     Directory.CreateDirectory(Path.GetDirectoryName(fOutPath));
-                    var cliArgs = "-S " + cliOptions.CompilerArgs
+                    var cliArgs = "-S --no-c-code-in-asm " + cliOptions.CompilerArgs
                         .Replace("${in}", string.Format("\"{0}\"", srcFilePath))
                         .Replace("${out}", string.Format("\"{0}\"", fOutPath));
                     int eCode = Execute(cliOptions.CompilerName, cliArgs, out string allOut, out string stdErr);
@@ -230,11 +229,87 @@ namespace sdcc_asm_optimizer
                 baseDir, ".modules", baseName + extName
             });
 
-            List<string> resultLi = new();
+            Directory.CreateDirectory(outDirPath);
 
-            //TODO
+            var funcSyms = ctx.globalFuncSyms.ToList();
 
-            return resultLi.ToArray();
+            // make entry func at the first
+
+            var entryIdx = funcSyms.FindIndex(c => c.name == "_" + cliOptions.EntryName);
+            var IsEntrySourceFile = entryIdx != -1;
+            if (IsEntrySourceFile)
+            {
+                var s = funcSyms[entryIdx];
+                funcSyms.RemoveAt(entryIdx);
+                funcSyms.Insert(0, s);
+            }
+
+            // generate files
+
+            List<string> mFiles = new();
+
+            string[] srcRawLines = File.ReadAllLines(ctx.SrcFilePath);
+
+            int ModuleId = 0;
+            var ObtainFileName = (bool noId) => {
+                var cuID = ModuleId++;
+                if (noId) return baseName + extName;
+                return baseName + "_" + cuID.ToString() + extName;
+            };
+
+            var DisableLines = (StringBuilder[] lines, int startIdx, int stopIdx) => {
+                for (int i = startIdx; i < stopIdx + 1; i++) lines[i].Insert(0, ';');
+            };
+
+            foreach (var curSym in funcSyms)
+            {
+                bool IsInModule_0 = ModuleId == 0;
+                bool IsEntryModule = IsInModule_0 && IsEntrySourceFile;
+
+                // prepare files
+
+                int CurModuleId = ModuleId;
+                string srcFileName = outDirPath + Path.DirectorySeparatorChar + ObtainFileName(IsEntryModule);
+                StringBuilder[] srcLines = srcRawLines.Select(l => new StringBuilder(l)).ToArray();
+
+                // rename module name
+
+                if (!IsEntryModule)
+                {
+                    srcLines[ctx.moduleHeaderLine].Replace(ctx.moduleName, ctx.moduleName + "_" + CurModuleId);
+                }
+
+                // del syms
+
+                if (IsInModule_0) // only ban func syms in module[0]
+                {
+                    foreach (var bannedSym in ctx.globalFuncSyms.Where(s => s.UID != curSym.UID))
+                    {
+                        DisableLines(srcLines, bannedSym.startLine, bannedSym.stopLine);
+                    }
+                }
+                else // ban non-self syms in module[1..n]
+                {
+                    foreach (var bannedSym in ctx.symbols.Where(s => s.UID != curSym.UID))
+                    {
+                        DisableLines(srcLines, bannedSym.startLine, bannedSym.stopLine);
+                    }
+
+                    foreach (var lineIdx in ctx.isolatedStatementLines)
+                    {
+                        DisableLines(srcLines, lineIdx, lineIdx);
+                    }
+                }
+
+                // gen files
+
+                var wLines = srcLines.Select(sl => sl.ToString()).ToArray();
+                File.WriteAllLines(srcFileName, wLines);
+
+                mFiles.Add(srcFileName);
+            }
+
+            return mFiles.ToArray();
         }
 
         private static SourceContext ParseSourceFile(string srcPath, StringWriter stdOut, StringWriter stdErr)
@@ -387,20 +462,51 @@ namespace sdcc_asm_optimizer
         Function,
     }
 
+    class SymbolLocation
+    {
+        public int startLine = -1;
+        public int stopLine = -1;
+    }
+
     class SourceSymbol
     {
-        // identifier name, like: 'arr'
-        public string name = "";
+        public string name = ""; // identifier name, like: '_arr'
+
+        public string seg = null;
+
         public SymbolType symType = SymbolType.Function;
 
-        public IToken startLocation = null;
-        public IToken stopLocation = null;
+        public List<string> refs = null;
 
-        public string GetOriginSymbolName
+        public int startLine = -1;
+
+        public int stopLine = -1;
+
+        public List<SymbolLocation> xinitLocations = null;
+
+        public string UID
         {
             get {
-                return name[1..];
+                if (startLine == -1 || stopLine == -1) return null;
+                return string.Format("{0}-{1}-{2}-{3}",
+                    name, symType.ToString().ToLower(),
+                    startLine, stopLine);
             }
+        }
+
+        public override bool Equals(object obj)
+        {
+            if (obj is SourceSymbol sym)
+            {
+                return sym.UID == this.UID;
+            }
+
+            return false;
+        }
+
+        public override int GetHashCode()
+        {
+            return UID.GetHashCode();
         }
     }
 
@@ -409,10 +515,29 @@ namespace sdcc_asm_optimizer
         public string SrcFilePath;
         public ICharStream SrcFileStream;
 
+        public string moduleName = null;
+
+        public int moduleHeaderLine = -1;
+
+        public SourceSymbol[] symbols = null;
+
+        public SourceSymbol[] globalSymbols = null;
+
+        public SourceSymbol[] globalFuncSyms = null;
+
+        public int[] isolatedStatementLines = null;
+
         public SourceContext(string SrcFilePath, ICharStream SrcFileStream)
         {
             this.SrcFilePath = SrcFilePath;
             this.SrcFileStream = SrcFileStream;
+        }
+
+        public void Commit()
+        {
+            globalFuncSyms = symbols
+                .Where(s => s.symType == SymbolType.Function && globalSymbols.Contains(s))
+                .ToArray();
         }
     }
 
@@ -422,9 +547,15 @@ namespace sdcc_asm_optimizer
         {
             public string module;
 
+            public int moduleHeaderLine = -1;
+
             public List<string> globalSymbols = new(64);
 
             public List<SourceSymbol> symbols = new(64);
+
+            public List<int> isolatedStatementLines = new(64);
+
+            // current parser context
 
             public string segment;  // current segment
 
@@ -436,7 +567,45 @@ namespace sdcc_asm_optimizer
 
             public int stopLine;    // label region end line
 
+            public List<string> refs = new(64);
+
             public bool IsActived { get { return label != null; } }
+
+            // funcs
+
+            public void Flush(ParserRuleContext ctx, bool isFileEnd = false)
+            {
+                if (this.IsActived)
+                {
+                    this.stopLine = ctx.Stop.Line - (isFileEnd ? 1 : 2); // prev sym stopLine
+
+                    symbols.Add(new SourceSymbol {
+                        name = this.label,
+                        seg = this.segment,
+                        symType = this.type,
+                        startLine = this.startLine,
+                        stopLine = this.stopLine,
+                        refs = this.refs.Distinct().Where(s => s.StartsWith('_')).ToList()
+                    });
+                }
+
+                // reinit all
+                this.label = null;
+                this.type = SymbolType.Function;
+                this.startLine = -1;
+                this.stopLine = -1;
+                this.refs.Clear();
+            }
+
+            public void Commit(SourceContext srcCtx)
+            {
+                srcCtx.moduleName = this.module;
+                srcCtx.moduleHeaderLine = this.moduleHeaderLine;
+                srcCtx.symbols = this.symbols.Distinct().ToArray();
+                srcCtx.globalSymbols = symbols.Where(s => this.globalSymbols.Contains(s.name)).ToArray();
+                srcCtx.isolatedStatementLines = this.isolatedStatementLines.ToArray();
+                srcCtx.Commit();
+            }
         }
 
         //////////////////////////////////////////////////////////////////////
@@ -461,18 +630,94 @@ namespace sdcc_asm_optimizer
             return SourceContext.SrcFileStream.GetText(new Interval(ctx.Start.StartIndex, ctx.Stop.StopIndex));
         }
 
+        private T[] FindChild<T>(ParserRuleContext rootCtx) where T : ParserRuleContext
+        {
+            List<T> result = new();
+
+            Queue<ParserRuleContext> ctxQueue = new(64);
+
+            foreach (var child in rootCtx.children)
+            {
+                if (child is ParserRuleContext c)
+                {
+                    ctxQueue.Enqueue(c);
+                }
+            }
+
+            while (ctxQueue.Count > 0)
+            {
+                var ctx = ctxQueue.Dequeue();
+
+                if (ctx is T t)
+                {
+                    result.Add(t);
+                }
+
+                if (ctx.ChildCount > 0)
+                {
+                    foreach (var child in ctx.children)
+                    {
+                        if (child is ParserRuleContext c)
+                        {
+                            ctxQueue.Enqueue(c);
+                        }
+                    }
+                }
+            }
+
+            return result.ToArray();
+        }
+
+        private delegate bool RuleContextChildWalker<T>(T ctx) where T : ParserRuleContext;
+
+        private static void WalkChild<T>(ParserRuleContext rootCtx, RuleContextChildWalker<T> walker) where T : ParserRuleContext
+        {
+            Queue<ParserRuleContext> ctxQueue = new(64);
+
+            foreach (var child in rootCtx.children)
+            {
+                if (child is ParserRuleContext c)
+                {
+                    ctxQueue.Enqueue(c);
+                }
+            }
+
+            while (ctxQueue.Count > 0)
+            {
+                var ctx = ctxQueue.Dequeue();
+
+                if (ctx is T t)
+                {
+                    if (walker(t))
+                        return;
+                }
+
+                if (ctx.ChildCount > 0)
+                {
+                    foreach (var child in ctx.children)
+                    {
+                        if (child is ParserRuleContext c)
+                        {
+                            ctxQueue.Enqueue(c);
+                        }
+                    }
+                }
+            }
+        }
+
         /////////////////////////////////// parser //////////////////////////////////////////
 
         public override void ExitSegment([NotNull] SdAsmParser.SegmentContext context)
         {
-            FlushAsmContext(context);
+            AsmSrcContext.Flush(context);
 
-            var vName = context.SegmentName().GetText();
+            var vName = context.SegmentType().GetText();
 
             switch (vName)
             {
                 case "module":
-                    AsmSrcContext.module = vName;
+                    AsmSrcContext.module = context.segmentSpec().GetText();
+                    AsmSrcContext.moduleHeaderLine = context.Start.Line - 1;
                     break;
                 case "globl":
                     AsmSrcContext.globalSymbols.Add(context.segmentSpec().GetText());
@@ -487,18 +732,19 @@ namespace sdcc_asm_optimizer
 
         public override void ExitLabel([NotNull] SdAsmParser.LabelContext context)
         {
-            FlushAsmContext(context);
-
             if (context.GetChild(0) is SdAsmParser.NormalLabelContext ctx)
             {
+                AsmSrcContext.Flush(context);
                 AsmSrcContext.label = ctx.Identifier().GetText();
+                AsmSrcContext.type = SymbolType.Function;
                 AsmSrcContext.startLine = ctx.Start.Line - 1;
             }
         }
 
         public override void ExitAsmFile([NotNull] SdAsmParser.AsmFileContext context)
         {
-            FlushAsmContext(context, true);
+            AsmSrcContext.Flush(context, true);
+            AsmSrcContext.Commit(SourceContext);
         }
 
         public override void ExitMemoryAlloc([NotNull] SdAsmParser.MemoryAllocContext context)
@@ -512,25 +758,17 @@ namespace sdcc_asm_optimizer
 
         public override void ExitStatement([NotNull] SdAsmParser.StatementContext context)
         {
-        }
-
-        private void FlushAsmContext(ParserRuleContext ctx, bool isFileEnd = false)
-        {
-            if (AsmSrcContext.IsActived)
+            if (AsmSrcContext.IsActived &&
+                AsmSrcContext.type == SymbolType.Function)
             {
-                //TODO
+                var idLi = FindChild<SdAsmParser.NormalLabelContext>(context)
+                    .Select(c => c.Identifier().GetText()).ToArray();
+                AsmSrcContext.refs.AddRange(idLi);
             }
 
-            AsmSrcContext.label = null;
-            AsmSrcContext.startLine = -1;
-            AsmSrcContext.stopLine = -1;
-
-            //
-            // commit all symbols
-            //
-            if (isFileEnd)
+            else
             {
-                //TODO
+                AsmSrcContext.isolatedStatementLines.Add(context.Start.Line - 1);
             }
         }
 

@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-// Generated from SdAsm.g4 by ANTLR 4.10.1
+// Generated from ./SdAsm.g4 by ANTLR 4.10.1
 
 // Unreachable code detected
 #pragma warning disable 0162
@@ -43,7 +43,7 @@ public partial class SdAsmParser : Parser {
 		Assign=30, PlusAssign=31, MinusAssign=32, StarAssign=33, DivAssign=34, 
 		ModAssign=35, LeftShiftAssign=36, RightShiftAssign=37, AndAssign=38, OrAssign=39, 
 		XorAssign=40, TildeAssign=41, ORG=42, Question=43, SingleQuote=44, Quote=45, 
-		Colon=46, Comma=47, Pound=48, AT=49, CRLF=50, SegmentName=51, DataType=52, 
+		Colon=46, Comma=47, Pound=48, AT=49, CRLF=50, SegmentType=51, DataType=52, 
 		Number=53, Identifier=54, StringLiteral=55, WS=56, COMMENT=57;
 	public const int
 		RULE_asmFile = 0, RULE_codeLine = 1, RULE_segment = 2, RULE_segmentSpec = 3, 
@@ -77,7 +77,7 @@ public partial class SdAsmParser : Parser {
 		"MinusAssign", "StarAssign", "DivAssign", "ModAssign", "LeftShiftAssign", 
 		"RightShiftAssign", "AndAssign", "OrAssign", "XorAssign", "TildeAssign", 
 		"ORG", "Question", "SingleQuote", "Quote", "Colon", "Comma", "Pound", 
-		"AT", "CRLF", "SegmentName", "DataType", "Number", "Identifier", "StringLiteral", 
+		"AT", "CRLF", "SegmentType", "DataType", "Number", "Identifier", "StringLiteral", 
 		"WS", "COMMENT"
 	};
 	public static readonly IVocabulary DefaultVocabulary = new Vocabulary(_LiteralNames, _SymbolicNames);
@@ -329,7 +329,7 @@ public partial class SdAsmParser : Parser {
 
 	public partial class SegmentContext : ParserRuleContext {
 		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode Dot() { return GetToken(SdAsmParser.Dot, 0); }
-		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode SegmentName() { return GetToken(SdAsmParser.SegmentName, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode SegmentType() { return GetToken(SdAsmParser.SegmentType, 0); }
 		[System.Diagnostics.DebuggerNonUserCode] public SegmentSpecContext segmentSpec() {
 			return GetRuleContext<SegmentSpecContext>(0);
 		}
@@ -360,7 +360,7 @@ public partial class SdAsmParser : Parser {
 			State = 80;
 			Match(Dot);
 			State = 81;
-			Match(SegmentName);
+			Match(SegmentType);
 			State = 82;
 			segmentSpec();
 			}

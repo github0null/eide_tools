@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-// Generated from SdAsm.g4 by ANTLR 4.10.1
+// Generated from ./SdAsm.g4 by ANTLR 4.10.1
 
 // Unreachable code detected
 #pragma warning disable 0162

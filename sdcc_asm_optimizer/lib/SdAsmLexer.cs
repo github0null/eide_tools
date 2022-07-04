@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-// Generated from SdAsm.g4 by ANTLR 4.10.1
+// Generated from ./SdAsm.g4 by ANTLR 4.10.1
 
 // Unreachable code detected
 #pragma warning disable 0162
@@ -40,7 +40,7 @@ public partial class SdAsmLexer : Lexer {
 		Assign=30, PlusAssign=31, MinusAssign=32, StarAssign=33, DivAssign=34, 
 		ModAssign=35, LeftShiftAssign=36, RightShiftAssign=37, AndAssign=38, OrAssign=39, 
 		XorAssign=40, TildeAssign=41, ORG=42, Question=43, SingleQuote=44, Quote=45, 
-		Colon=46, Comma=47, Pound=48, AT=49, CRLF=50, SegmentName=51, DataType=52, 
+		Colon=46, Comma=47, Pound=48, AT=49, CRLF=50, SegmentType=51, DataType=52, 
 		Number=53, Identifier=54, StringLiteral=55, WS=56, COMMENT=57;
 	public static string[] channelNames = {
 		"DEFAULT_TOKEN_CHANNEL", "HIDDEN"
@@ -58,7 +58,7 @@ public partial class SdAsmLexer : Lexer {
 		"MinusAssign", "StarAssign", "DivAssign", "ModAssign", "LeftShiftAssign", 
 		"RightShiftAssign", "AndAssign", "OrAssign", "XorAssign", "TildeAssign", 
 		"ORG", "Question", "SingleQuote", "Quote", "Colon", "Comma", "Pound", 
-		"AT", "CRLF", "SegmentName", "DataType", "Number", "Identifier", "StringLiteral", 
+		"AT", "CRLF", "SegmentType", "DataType", "Number", "Identifier", "StringLiteral", 
 		"CCharSequence", "CChar", "EscapeSequence", "SimpleEscapeSequence", "OctalEscapeSequence", 
 		"HexadecimalEscapeSequence", "UniversalCharacterName", "EncodingPrefix", 
 		"SCharSequence", "SChar", "HexQuad", "HexadecimalDigit", "OctalDigit", 
@@ -91,7 +91,7 @@ public partial class SdAsmLexer : Lexer {
 		"MinusAssign", "StarAssign", "DivAssign", "ModAssign", "LeftShiftAssign", 
 		"RightShiftAssign", "AndAssign", "OrAssign", "XorAssign", "TildeAssign", 
 		"ORG", "Question", "SingleQuote", "Quote", "Colon", "Comma", "Pound", 
-		"AT", "CRLF", "SegmentName", "DataType", "Number", "Identifier", "StringLiteral", 
+		"AT", "CRLF", "SegmentType", "DataType", "Number", "Identifier", "StringLiteral", 
 		"WS", "COMMENT"
 	};
 	public static readonly IVocabulary DefaultVocabulary = new Vocabulary(_LiteralNames, _SymbolicNames);
