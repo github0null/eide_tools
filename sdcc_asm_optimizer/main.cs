@@ -56,9 +56,6 @@ namespace sdcc_asm_optimizer
             [Option('o', "outdir", Required = true, HelpText = "output root folder")]
             public string OutputDir { get; set; }
 
-            [Option('c', "compiler", Required = true, HelpText = "compiler name")]
-            public string CompilerName { get; set; }
-
             [Option("compiler-args", Required = true, HelpText = "compiler args")]
             public string CompilerArgs { get; set; }
 
@@ -92,7 +89,8 @@ namespace sdcc_asm_optimizer
         public static readonly TextWriter StdOut = Console.Out;
         public static readonly TextWriter StdErr = Console.Error;
 
-        public static string objSuffix = ".o";
+        public static string objSuffix = ".rel";
+        public static string compilerName = "sdcc";
 
         //
         // program entry
@@ -110,8 +108,8 @@ namespace sdcc_asm_optimizer
                 Environment.CurrentDirectory = cliOptions.WorkFolder;
 
                 // check supported toolchain
-                if (!gSupportedToolLi.Contains(cliOptions.CompilerName.ToLower()))
-                    throw new Exception(string.Format("We not support this toolchain: '{0}'", cliOptions.CompilerName));
+                if (!gSupportedToolLi.Contains(compilerName))
+                    throw new Exception(string.Format("We not support this toolchain: '{0}'", compilerName));
 
                 if (cliOptions.CompilerDir != null)
                     Append2SysEnv(cliOptions.CompilerDir);
@@ -121,9 +119,6 @@ namespace sdcc_asm_optimizer
 
                 if (cliOptions.EntryName == null)
                     cliOptions.EntryName = "main";
-
-                if (cliOptions.CompilerName == "sdcc")
-                    objSuffix = ".rel";
 
                 // filter source file
                 cliOptions.InputSrcFiles = cliOptions.InputSrcFiles
@@ -140,7 +135,7 @@ namespace sdcc_asm_optimizer
                     var cliArgs = "-S --no-c-code-in-asm " + cliOptions.CompilerArgs
                         .Replace("${in}", string.Format("\"{0}\"", srcFilePath))
                         .Replace("${out}", string.Format("\"{0}\"", fOutPath));
-                    int eCode = Execute(cliOptions.CompilerName, cliArgs, out string allOut, out string stdErr);
+                    int eCode = Execute(compilerName, cliArgs, out string allOut, out string stdErr);
                     StdErr.Write(allOut); // pass compiler out -> stderr
                     if (eCode != CODE_DONE) return eCode;
 
@@ -155,7 +150,7 @@ namespace sdcc_asm_optimizer
                     // compile modules
                     outLines.Add("---> " + srcFilePath);
                     if (outFiles.Length == 0) outFiles = new string[] { fOutPath }; // use origin file
-                    var oLi = CompileModuleFiles(cliOptions.CompilerName, cliOptions.CompilerArgs, outFiles);
+                    var oLi = CompileModuleFiles(compilerName, cliOptions.CompilerArgs, outFiles);
                     foreach (var p in oLi) outLines.Add(p);
                     outLines.Add("<---");
                     outLines.Add(pStdOut.GetStringBuilder().ToString());
