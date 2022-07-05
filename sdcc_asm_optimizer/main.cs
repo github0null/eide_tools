@@ -230,7 +230,7 @@ namespace sdcc_asm_optimizer
 
         struct SymbolReferenceItem
         {
-            public string uid;
+            public string name;
             public SourceSymbol[] refs;
         };
 
@@ -253,7 +253,7 @@ namespace sdcc_asm_optimizer
 
             List<SymbolReferenceItem> globlFuncStaticRefs = new(64);
 
-            var globalFuncs = ctx.globalFuncSyms.Where(f => f.name != programEntrySymName);
+            var funcs = ctx.globalFuncSyms.Where(f => f.name != programEntrySymName);
 
             foreach (var curSym in globalFuncs)
             {
@@ -276,7 +276,7 @@ namespace sdcc_asm_optimizer
 
                     // if it's global sym, ignore it
                     // we only need to handle static reference
-                    if (!ctx.IsStatic(s.UID))
+                    if (!ctx.IsLocalSymbol(s.name))
                         continue;
 
                     curRefs.Add(s);
@@ -294,13 +294,10 @@ namespace sdcc_asm_optimizer
                 }
 
                 // if global func refed static func, we need exclude it
-                if (!curRefs.Any(ref_ => ref_.symType == SymbolType.Function && ctx.IsStatic(ref_.UID)))
-                {
-                    globlFuncStaticRefs.Add(new SymbolReferenceItem() {
-                        uid = curSym.UID,
-                        refs = curRefs.Distinct().ToArray()
-                    });
-                }
+                globlFuncStaticRefs.Add(new SymbolReferenceItem() {
+                    name = curSym.name,
+                    refs = curRefs.Distinct().ToArray()
+                });
             }
 
             globlFuncStaticRefs.Sort((a, b) => b.refs.Length - a.refs.Length);
@@ -315,13 +312,13 @@ namespace sdcc_asm_optimizer
 
             foreach (var symInfo in globlFuncStaticRefs)
             {
-                var rootSym = ctx.GetSymbol(symInfo.uid);
+                var rootSym = ctx.GetSymbolByName(symInfo.name);
 
                 if (FindResolvedGrpIdx(rootSym) != -1)
                     continue;
 
                 if (rootSym.symType == SymbolType.Variable &&
-                    ctx.IsStatic(rootSym.UID) == false)
+                    ctx.IsLocalSymbol(rootSym.name) == false)
                     continue; // ignore global variables, it's extern
 
                 List<SourceSymbol> curSyms = new();
@@ -392,7 +389,7 @@ namespace sdcc_asm_optimizer
                     {
                         if (sym.symType == SymbolType.Variable)
                         {
-                            if (ctx.IsStatic(sym.UID))
+                            if (ctx.IsLocalSymbol(sym.name))
                             {
                                 DisableLines(srcLines, sym.startLine, sym.stopLine);
 
@@ -405,6 +402,12 @@ namespace sdcc_asm_optimizer
                         else
                         {
                             DisableLines(srcLines, sym.startLine, sym.stopLine);
+
+                            if (!ctx.IsLocalSymbol(sym.name)) // if it's global, dis import decl
+                            {
+                                var lineIdx = ctx.globSymImportLineMap[sym.name];
+                                DisableLines(srcLines, lineIdx, lineIdx);
+                            }
                         }
                     }
                 }
@@ -430,7 +433,6 @@ namespace sdcc_asm_optimizer
 
                 // disable banned syms
                 var bannedSyms = ctx.symbols.Where(s => !symGrpForFile.Contains(s));
-
                 foreach (var disSym in bannedSyms)
                 {
                     DisableLines(srcLines, disSym.startLine, disSym.stopLine);
@@ -438,6 +440,22 @@ namespace sdcc_asm_optimizer
                     foreach (var loc in disSym.xinitLocations)
                     {
                         DisableLines(srcLines, loc.startLine, loc.stopLine);
+                    }
+                }
+
+                // disable noused import decl
+                {
+                    List<string> inUsedGloblSyms = new(64);
+                    foreach (var sym in symGrpForFile)
+                    {
+                        if (!ctx.IsLocalSymbol(sym.name)) inUsedGloblSyms.Add(sym.name);
+                        foreach (var name in sym.refs) inUsedGloblSyms.Add(name);
+                    }
+                    var unusedGloblSyms = ctx.globSymImportLineMap.Keys.Where(name => !inUsedGloblSyms.Contains(name));
+                    foreach (var symName in unusedGloblSyms)
+                    {
+                        var lineIdx = ctx.globSymImportLineMap[symName];
+                        DisableLines(srcLines, lineIdx, lineIdx);
                     }
                 }
 
@@ -618,6 +636,8 @@ namespace sdcc_asm_optimizer
 
         public SymbolType symType = SymbolType.Function;
 
+        public bool isStatic = true;
+
         public List<string> refs = null;
 
         public int startLine = -1;
@@ -631,8 +651,7 @@ namespace sdcc_asm_optimizer
             get {
                 if (startLine == -1 || stopLine == -1) return null;
                 return string.Format("{0}-{1}-{2}-{3}",
-                    name, symType.ToString().ToLower(),
-                    startLine, stopLine);
+                    name, symType.ToString().ToLower(), startLine, stopLine);
             }
         }
 
@@ -665,13 +684,11 @@ namespace sdcc_asm_optimizer
 
         public SourceSymbol[] symbols = null;
 
-        public Dictionary<string, SourceSymbol> symbolsMap = null;
+        private Dictionary<string, SourceSymbol> symbolsMap = null;
 
-        public SourceSymbol[] globalSymbols = null;
+        public Dictionary<string, int> globSymImportLineMap = null;
 
-        public SourceSymbol[] globalFuncSyms = null;
-
-        public SourceSymbol[] globalVarSyms = null;
+        public SourceSymbol[] forceLocalFuncSyms = null;
 
         public int[] isolatedStatementLines = null;
 
@@ -686,14 +703,26 @@ namespace sdcc_asm_optimizer
             return symbols.Where(s => s.name == name);
         }
 
-        public SourceSymbol GetSymbol(string uid)
+        public SourceSymbol GetSymbolByName(string name)
         {
-            return symbolsMap[uid];
+            return symbolsMap[name];
         }
 
-        public bool IsStatic(string uid)
+        public bool IsLocalSymbol(string name)
         {
-            return !globalSymbols.Any(s => s.UID == uid);
+            return !globSymImportLineMap.ContainsKey(name);
+        }
+
+        public bool IsLocalFunc(string name)
+        {
+            if (!symbolsMap.ContainsKey(name)) return false;
+            return !globSymImportLineMap.ContainsKey(name) && symbolsMap[name].symType == SymbolType.Function;
+        }
+
+        public bool IsLocalVariable(string name)
+        {
+            if (!symbolsMap.ContainsKey(name)) return false;
+            return !globSymImportLineMap.ContainsKey(name) && symbolsMap[name].symType == SymbolType.Variable;
         }
 
         public void Commit()
@@ -702,16 +731,16 @@ namespace sdcc_asm_optimizer
                 return symbols.Any(v => v.symType == SymbolType.Variable && v.name.StartsWith(sFunc.name + "_"));
             };
 
+            forceLocalFuncSyms = symbols
+                .Where(s => s.symType == SymbolType.Function && IsFuncWithStaticLocalVar(s))
+                .ToArray();
+
             globalFuncSyms = symbols
                 .Where(s => s.symType == SymbolType.Function && globalSymbols.Contains(s) && !IsFuncWithStaticLocalVar(s))
                 .ToArray();
 
-            globalVarSyms = symbols
-                .Where(s => s.symType != SymbolType.Function && globalSymbols.Contains(s))
-                .ToArray();
-
             symbolsMap = new(symbols.Length);
-            foreach (var sym in symbols) symbolsMap.Add(sym.UID, sym);
+            foreach (var sym in symbols) symbolsMap.Add(sym.name, sym);
         }
     }
 
@@ -725,7 +754,7 @@ namespace sdcc_asm_optimizer
 
             public string[] assemblerOpts = null;
 
-            public List<string> globalSymbols = new(64);
+            public Dictionary<string, int> globalSymbols = new(64);
 
             public List<SourceSymbol> symbols = new(64);
 
@@ -736,6 +765,8 @@ namespace sdcc_asm_optimizer
             public string segment;  // current segment
 
             public string label;    // current label
+
+            public bool isGlobal;
 
             public SymbolType type = SymbolType.Function; // current ctx type
 
@@ -776,6 +807,7 @@ namespace sdcc_asm_optimizer
                             name = this.label,
                             seg = this.segment,
                             symType = this.type,
+                            isStatic = !this.isGlobal,
                             startLine = this.startLine,
                             stopLine = this.stopLine,
                             refs = this.refs.Distinct().Where(s => s.StartsWith('_')).ToList()
@@ -785,6 +817,7 @@ namespace sdcc_asm_optimizer
 
                 // reinit all
                 this.label = null;
+                this.isGlobal = false;
                 this.type = SymbolType.Function;
                 this.startLine = -1;
                 this.stopLine = -1;
@@ -796,8 +829,14 @@ namespace sdcc_asm_optimizer
                 srcCtx.moduleName = this.module;
                 srcCtx.moduleHeaderLine = this.moduleHeaderLine;
                 srcCtx.symbols = this.symbols.Distinct().ToArray();
-                srcCtx.globalSymbols = symbols.Where(s => this.globalSymbols.Contains(s.name)).ToArray();
+                srcCtx.globSymImportLineMap = globalSymbols.ToDictionary(kv => kv.Key, kv => kv.Value);
                 srcCtx.isolatedStatementLines = this.isolatedStatementLines.ToArray();
+
+                foreach (var sym in srcCtx.symbols)
+                {
+                    if (globalSymbols.Keys.Contains(sym.name))
+                        sym.isStatic = false;
+                }
 
                 foreach (var item in assemblerOpts)
                 {
@@ -902,7 +941,7 @@ namespace sdcc_asm_optimizer
             switch (context.SegmentType().GetText())
             {
                 case "globl":
-                    AsmSrcContext.globalSymbols.Add(context.segmentSpec().GetText());
+                    AsmSrcContext.globalSymbols.Add(context.segmentSpec().GetText(), context.Start.Line - 1);
                     break;
                 default:
                     AsmSrcContext.segment = context.segmentSpec().GetToken(SdAsmParser.Identifier, 0).GetText();
@@ -910,14 +949,19 @@ namespace sdcc_asm_optimizer
             }
         }
 
+        private static readonly string[] CODE_SEG_LI = new string[] {
+            "GSINIT", "CODE", "HOME", "GSFINAL"
+        };
+
         public override void ExitLabel([NotNull] SdAsmParser.LabelContext context)
         {
             if (context.GetChild(0) is SdAsmParser.NormalLabelContext ctx)
             {
                 AsmSrcContext.Flush(context);
                 AsmSrcContext.label = ctx.Identifier().GetText();
-                AsmSrcContext.type = AsmSrcContext.segment == "CODE" ? SymbolType.Function : SymbolType.Variable;
+                AsmSrcContext.type = CODE_SEG_LI.Contains(AsmSrcContext.segment) ? SymbolType.Function : SymbolType.Variable;
                 AsmSrcContext.startLine = ctx.Start.Line - 1;
+                AsmSrcContext.isGlobal = context.Colon().Length > 1;
             }
         }
 
