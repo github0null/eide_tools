@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-// Generated from SdAsm.g4 by ANTLR 4.10.1
+// Generated from ./SdAsm.g4 by ANTLR 4.10.1
 
 // Unreachable code detected
 #pragma warning disable 0162
@@ -50,6 +50,36 @@ public interface ISdAsmListener : IParseTreeListener {
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	void ExitCodeLine([NotNull] SdAsmParser.CodeLineContext context);
+	/// <summary>
+	/// Enter a parse tree produced by <see cref="SdAsmParser.directive"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void EnterDirective([NotNull] SdAsmParser.DirectiveContext context);
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="SdAsmParser.directive"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void ExitDirective([NotNull] SdAsmParser.DirectiveContext context);
+	/// <summary>
+	/// Enter a parse tree produced by <see cref="SdAsmParser.moduleName"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void EnterModuleName([NotNull] SdAsmParser.ModuleNameContext context);
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="SdAsmParser.moduleName"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void ExitModuleName([NotNull] SdAsmParser.ModuleNameContext context);
+	/// <summary>
+	/// Enter a parse tree produced by <see cref="SdAsmParser.sdccOpts"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void EnterSdccOpts([NotNull] SdAsmParser.SdccOptsContext context);
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="SdAsmParser.sdccOpts"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void ExitSdccOpts([NotNull] SdAsmParser.SdccOptsContext context);
 	/// <summary>
 	/// Enter a parse tree produced by <see cref="SdAsmParser.segment"/>.
 	/// </summary>
@@ -131,6 +161,16 @@ public interface ISdAsmListener : IParseTreeListener {
 	/// <param name="context">The parse tree.</param>
 	void ExitStatement([NotNull] SdAsmParser.StatementContext context);
 	/// <summary>
+	/// Enter a parse tree produced by <see cref="SdAsmParser.absAddrAllocExpr"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void EnterAbsAddrAllocExpr([NotNull] SdAsmParser.AbsAddrAllocExprContext context);
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="SdAsmParser.absAddrAllocExpr"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void ExitAbsAddrAllocExpr([NotNull] SdAsmParser.AbsAddrAllocExprContext context);
+	/// <summary>
 	/// Enter a parse tree produced by <see cref="SdAsmParser.instruction"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -140,16 +180,6 @@ public interface ISdAsmListener : IParseTreeListener {
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	void ExitInstruction([NotNull] SdAsmParser.InstructionContext context);
-	/// <summary>
-	/// Enter a parse tree produced by <see cref="SdAsmParser.assignmentExpr"/>.
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	void EnterAssignmentExpr([NotNull] SdAsmParser.AssignmentExprContext context);
-	/// <summary>
-	/// Exit a parse tree produced by <see cref="SdAsmParser.assignmentExpr"/>.
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	void ExitAssignmentExpr([NotNull] SdAsmParser.AssignmentExprContext context);
 	/// <summary>
 	/// Enter a parse tree produced by <see cref="SdAsmParser.expressions"/>.
 	/// </summary>

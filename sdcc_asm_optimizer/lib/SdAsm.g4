@@ -11,12 +11,27 @@ asmFile
     ;
 
 codeLine
-    : segment 
+    : directive
+    | segment
     | bootAddr
     | memoryAlloc
     | ifStatement
-    | label 
+    | label
     | statement
+    ;
+
+directive
+    : '.' ('16bit' | '24bit' | '32bit')
+    | '.' 'module' moduleName
+    | '.' 'optsdcc' sdccOpts+
+    ;
+
+moduleName
+    : Identifier
+    ;
+
+sdccOpts
+    : '-'+ Identifier
     ;
 
 segment
@@ -24,7 +39,7 @@ segment
     ;
 
 segmentSpec
-    : '-'* Identifier ('-'* Identifier | '(' (segmentSpec ','?)+ ')')*
+    : Identifier (Identifier | '(' (segmentSpec ','?)+ ')')*
     ;
 
 bootAddr
@@ -43,6 +58,7 @@ memoryData
 
 ifStatement
     : '.if' '!'? Identifier
+    | '.ifdef' Identifier
     | '.else'
     | '.endif'
     ;
@@ -52,16 +68,16 @@ label
     ;
 
 statement
-    : assignmentExpr 
+    : absAddrAllocExpr 
     | instruction expressions?
+    ;
+
+absAddrAllocExpr
+    : Identifier Assign Number
     ;
 
 instruction
     : Identifier
-    ;
-
-assignmentExpr
-    : operand assignmentOperator expr
     ;
 
 expressions
@@ -199,7 +215,7 @@ CRLF: '\r'? '\n';
 
 // identifiers
 
-SegmentType: 'module' | 'optsdcc' | 'globl' | 'area';
+SegmentType: 'globl' | 'area' | 'local' | 'bank';
 
 DataType: 'ascii' | 'byte' | 'db' | 'ds' | 'dw' | 'dd';
 
