@@ -247,104 +247,14 @@ namespace sdcc_asm_optimizer
 
             Directory.CreateDirectory(outDirPath);
 
-            var programEntrySymName = "_" + cliOptions.EntryName;
-
             // make static ref chain, exclude static var
+            Dictionary<string, SourceSymbol[]> symStaticRefs = ctx.MakeStaticRefs();
 
-            Dictionary<string, SourceSymbol[]> symStaticRefs = new(64);
-
-            var glbFuncs = ctx.symbols
-                .Where(s => !s.isStatic && s.name != programEntrySymName);
-            foreach (var curSym in glbFuncs)
-            {
-                List<SourceSymbol> curRefs = new(64);
-                List<SourceSymbol> refSyms = new(64);
-
-                foreach (var refName in curSym.refs)
-                {
-                    if (curSym.name == refName)
-                        continue; // skip loop self ref
-
-                    refSyms.AddRange(ctx.FindSymbols(refName));
-                }
-
-                Stack<SourceSymbol> symStk = new(refSyms);
-
-                while (symStk.Count > 0)
-                {
-                    var s = symStk.Pop();
-
-                    // if it's global sym, ignore it
-                    // we only need to handle static reference
-                    if (s.isStatic == false)
-                        continue;
-
-                    curRefs.Add(s);
-
-                    foreach (var n in s.refs)
-                    {
-                        if (s.name == n)
-                            continue; // skip loop self ref
-
-                        foreach (var item in ctx.FindSymbols(n))
-                        {
-                            symStk.Push(item);
-                        }
-                    }
-                }
-
-                if (!curRefs.Any(s => s.isStatic))
-                {
-                    symStaticRefs.Add(curSym.name, curRefs.Distinct().ToArray());
-                }
-            }
-
-            List<SymbolReferenceItem> detachedSyms = new(64);
-
-            // filter detach syms
-            {
-                List<SourceSymbol> excList = new(64);
-
-                // push exclude li
-                excList.AddRange(ctx.forceLocalFuncSyms);
-
-                foreach (var s in ctx.forceLocalFuncSyms)
-                {
-                    if (symStaticRefs.ContainsKey(s.name))
-                    {
-                        excList.AddRange(symStaticRefs[s.name]);
-                    }
-                }
-
-                //
-                foreach (var name in symStaticRefs.Keys)
-                {
-                    var curSym = ctx.GetSymbolByName(name);
-                    var curRefs = symStaticRefs[curSym.name];
-
-                    if (excList.Contains(curSym))
-                        continue;
-
-                    var refIsInExcli = false; // check symbol ref
-                    foreach (var s in curRefs) if (excList.Contains(s)) refIsInExcli = true;
-
-                    if (refIsInExcli)
-                    {
-                        excList.Add(curSym);
-                    }
-                }
-
-                var remainKeys = symStaticRefs.Keys.Where(name => {
-                    var s = ctx.GetSymbolByName(name);
-                    return !excList.Contains(s);
-                });
-
-                foreach (var name in remainKeys)
-                    detachedSyms.Add(new SymbolReferenceItem {
-                        rootSym = ctx.GetSymbolByName(name),
-                        refs = symStaticRefs[name]
-                    });
-            }
+            List<SymbolReferenceItem> detachedSyms =
+                symStaticRefs.Select(kv => new SymbolReferenceItem {
+                    rootSym = ctx.GetSymbolByName(kv.Key),
+                    refs = kv.Value
+                }).ToList();
 
             detachedSyms.Sort((a, b) => b.refs.Length - a.refs.Length);
 
@@ -402,6 +312,49 @@ namespace sdcc_asm_optimizer
 
             for (int i = 0; i < needDetachedSymGrps.Count; i++)
                 needDetachedSymGrps[i] = needDetachedSymGrps[i].Distinct().ToList();
+
+            // filter groups
+            {
+                List<SourceSymbol> excList = new(64);
+                var forceLocalSyms = ctx.forceLocalSyms.ToList();
+
+                // exclude main entry
+
+                var programEntrySymName = "_" + cliOptions.EntryName;
+                var entrySym = ctx.GetSymbolByName(programEntrySymName);
+                if (entrySym != null) forceLocalSyms.Add(entrySym);
+
+                // init exclude li
+
+                excList.AddRange(forceLocalSyms);
+
+                foreach (var s in forceLocalSyms)
+                {
+                    if (symStaticRefs.ContainsKey(s.name))
+                    {
+                        excList.AddRange(symStaticRefs[s.name]);
+                    }
+                }
+
+                // do filter
+
+                needDetachedSymGrps = needDetachedSymGrps.Where(grp => {
+
+                    var isPassed = true;
+
+                    foreach (var sym in grp)
+                    {
+                        if (excList.Contains(sym))
+                        {
+                            isPassed = false;
+                            break;
+                        }
+                    }
+
+                    return isPassed;
+
+                }).ToList();
+            }
 
             // generate files
 
@@ -502,14 +455,19 @@ namespace sdcc_asm_optimizer
                     List<string> inUsedGloblSyms = new(64);
                     foreach (var sym in symGrpForFile)
                     {
-                        if (!sym.isStatic) inUsedGloblSyms.Add(sym.name);
+                        inUsedGloblSyms.Add(sym.name);
                         foreach (var name in sym.refs) inUsedGloblSyms.Add(name);
                     }
-                    var unusedGloblSyms = ctx.globSymImportLineMap.Keys.Where(name => !inUsedGloblSyms.Contains(name));
+
+                    var unusedGloblSyms =
+                        ctx.globSymImportLineMap.Keys.Where(name => !inUsedGloblSyms.Contains(name));
                     foreach (var symName in unusedGloblSyms)
                     {
-                        var lineIdx = ctx.globSymImportLineMap[symName];
-                        DisableLines(srcLines, lineIdx, lineIdx);
+                        if (ctx.globSymImportLineMap.ContainsKey(symName))
+                        {
+                            var lineIdx = ctx.globSymImportLineMap[symName];
+                            DisableLines(srcLines, lineIdx, lineIdx);
+                        }
                     }
                 }
 
@@ -742,7 +700,7 @@ namespace sdcc_asm_optimizer
 
         public Dictionary<string, int> globSymImportLineMap = null;
 
-        public SourceSymbol[] forceLocalFuncSyms = null;
+        public SourceSymbol[] forceLocalSyms = null;
 
         public int[] isolatedStatementLines = null;
 
@@ -759,22 +717,78 @@ namespace sdcc_asm_optimizer
 
         public SourceSymbol GetSymbolByName(string name)
         {
+            if (!symbolsMap.ContainsKey(name)) return null;
             return symbolsMap[name];
+        }
+
+        public Dictionary<string, SourceSymbol[]> MakeStaticRefs()
+        {
+            Dictionary<string, SourceSymbol[]> symStaticRefs = new(64);
+
+            foreach (var curSym in symbols)
+            {
+                List<SourceSymbol> curRefs = new(64);
+                List<SourceSymbol> refSyms = new(64);
+
+                foreach (var refName in curSym.refs)
+                {
+                    if (curSym.name == refName)
+                        continue; // skip loop self ref
+
+                    refSyms.AddRange(FindSymbols(refName));
+                }
+
+                Stack<SourceSymbol> symStk = new(refSyms);
+
+                while (symStk.Count > 0)
+                {
+                    var s = symStk.Pop();
+
+                    // if it's global sym, ignore it
+                    // we only need to handle static reference
+                    if (s.isStatic == false)
+                        continue;
+
+                    curRefs.Add(s);
+
+                    foreach (var n in s.refs)
+                    {
+                        if (s.name == n)
+                            continue; // skip loop self ref
+
+                        foreach (var item in FindSymbols(n))
+                        {
+                            symStk.Push(item);
+                        }
+                    }
+                }
+
+                symStaticRefs.Add(curSym.name, curRefs.Distinct().ToArray());
+            }
+
+            return symStaticRefs;
         }
 
         public void Commit()
         {
-            var IsFuncWithStaticLocalVar = (SourceSymbol sFunc) => {
-                return symbols.Any(v => v.symType == SymbolType.Variable && v.name.StartsWith(sFunc.name + "_"));
-            };
-
-            forceLocalFuncSyms = symbols
-                .Where(s => s.symType == SymbolType.Function)
-                .Where(s => IsFuncWithStaticLocalVar(s) || s.seg != "CODE")
-                .ToArray();
-
             symbolsMap = new(symbols.Length);
             foreach (var sym in symbols) symbolsMap.Add(sym.name, sym);
+
+            var IsFuncWithStaticLocalVar = (SourceSymbol sFunc) => {
+                return symbols
+                    .Where(s => s.symType == SymbolType.Variable && s.isStatic)
+                    .Any(v => v.name.StartsWith(sFunc.name + "_"));
+            };
+
+            var forceLocalFuncSyms = symbols
+                .Where(s => s.symType == SymbolType.Function)
+                .Where(s => IsFuncWithStaticLocalVar(s) || s.seg != "CODE");
+
+            var forceLocalVarSyms = symbols
+                .Where(s => s.symType == SymbolType.Variable)
+                .Where(s => s.seg == "SSEG");
+
+            forceLocalSyms = forceLocalFuncSyms.Concat(forceLocalVarSyms).ToArray();
         }
     }
 
