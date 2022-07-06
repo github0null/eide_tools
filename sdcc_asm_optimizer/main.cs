@@ -419,9 +419,36 @@ namespace sdcc_asm_optimizer
                     }
                 }
 
+                var fLines = srcLines.Select(sl => sl.ToString()).ToList();
+
+                // append some defines
+                if (ctx.assemblerName == "mcs51")
+                {
+                    List<string> prependLines = new(1024);
+
+                    prependLines.AddRange(new string[] {
+                        ";",
+                        "; Generate by eide.sdcc_asm_optimizer",
+                        ";"
+                    });
+
+                    for (int i = 0; i < 8; i++)
+                        prependLines.Add(string.Format("\t.globl ar{0}", i));
+
+                    prependLines.Add("");
+
+                    for (int i = 0; i < 8; i++)
+                        prependLines.Add(string.Format("\tar{0} = 0x0{0}", i));
+
+                    prependLines.Add("");
+
+                    prependLines.AddRange(fLines);
+
+                    fLines = prependLines;
+                }
+
                 // gen files
-                var wLines = srcLines.Select(sl => sl.ToString()).ToArray();
-                File.WriteAllLines(srcFileName, wLines);
+                File.WriteAllLines(srcFileName, fLines);
                 mFiles.Add(srcFileName);
             }
 
@@ -646,6 +673,8 @@ namespace sdcc_asm_optimizer
 
         public string seg = null;
 
+        public string[] segOpts = null;
+
         public SymbolType symType = SymbolType.Function;
 
         public bool isStatic = true;
@@ -702,6 +731,8 @@ namespace sdcc_asm_optimizer
 
         public SourceSymbol[] forceLocalSyms = null;
 
+        public SourceSymbol[] ignoreDetachSyms = null;
+
         public int[] isolatedStatementLines = null;
 
         public SourceContext(string SrcFilePath, ICharStream SrcFileStream)
@@ -725,7 +756,9 @@ namespace sdcc_asm_optimizer
         {
             Dictionary<string, SourceSymbol[]> symStaticRefs = new(64);
 
-            foreach (var curSym in symbols)
+            var needDetachSyms = symbols.Where(s => !ignoreDetachSyms.Contains(s));
+
+            foreach (var curSym in needDetachSyms)
             {
                 List<SourceSymbol> curRefs = new(64);
                 List<SourceSymbol> refSyms = new(64);
@@ -769,6 +802,15 @@ namespace sdcc_asm_optimizer
             return symStaticRefs;
         }
 
+        private static string[] _USER_CODE_SEGS = {
+            "CODE", "CSEG"
+        };
+
+        public static bool IsInUserCodeSeg(SourceSymbol sym)
+        {
+            return _USER_CODE_SEGS.Contains(sym.seg);
+        }
+
         public void Commit()
         {
             symbolsMap = new(symbols.Length);
@@ -782,13 +824,21 @@ namespace sdcc_asm_optimizer
 
             var forceLocalFuncSyms = symbols
                 .Where(s => s.symType == SymbolType.Function)
-                .Where(s => IsFuncWithStaticLocalVar(s) || s.seg != "CODE");
+                .Where(s => IsFuncWithStaticLocalVar(s) || !IsInUserCodeSeg(s));
 
             var forceLocalVarSyms = symbols
                 .Where(s => s.symType == SymbolType.Variable)
                 .Where(s => s.seg == "SSEG");
 
-            forceLocalSyms = forceLocalFuncSyms.Concat(forceLocalVarSyms).ToArray();
+            forceLocalSyms = forceLocalFuncSyms
+                .Concat(forceLocalVarSyms)
+                .Distinct().ToArray();
+
+            string[] ignoredSeg = {
+                "RSEG"
+            };
+
+            ignoreDetachSyms = symbols.Where(sym => ignoredSeg.Contains(sym.seg)).ToArray();
         }
     }
 
@@ -811,6 +861,8 @@ namespace sdcc_asm_optimizer
             // current parser context
 
             public string segment;  // current segment
+
+            public string[] segmentOpts;  // current segment
 
             public string label;    // current label
 
@@ -854,6 +906,7 @@ namespace sdcc_asm_optimizer
                         symbols.Add(new SourceSymbol {
                             name = this.label,
                             seg = this.segment,
+                            segOpts = this.segmentOpts,
                             symType = this.type,
                             isStatic = !this.isGlobal,
                             startLine = this.startLine,
@@ -989,17 +1042,26 @@ namespace sdcc_asm_optimizer
             switch (context.SegmentType().GetText())
             {
                 case "globl":
-                    AsmSrcContext.globalSymbols.Add(context.segmentSpec().GetText(), context.Start.Line - 1);
+                    AsmSrcContext.globalSymbols.Add(context.segmentName().GetText(), context.Start.Line - 1);
+                    break;
+                case "area":
+                    AsmSrcContext.segment = context.segmentName().GetText();
+                    AsmSrcContext.segmentOpts = Array.ConvertAll(context.segmentOpts(), ctx => ctx.GetText());
                     break;
                 default:
-                    AsmSrcContext.segment = context.segmentSpec().GetToken(SdAsmParser.Identifier, 0).GetText();
                     break;
             }
         }
 
-        private static readonly string[] CODE_SEG_LI = new string[] {
-            "GSINIT", "CODE", "HOME", "GSFINAL"
-        };
+        private bool IsFunctionSym(AsmContext ctx)
+        {
+            string[] __CODE_SEG_LI = {
+                "HOME", "GSINIT","GSFINAL", "CODE", "CSEG",
+                "GSINIT0", "GSINIT1", "GSINIT2", "GSINIT3", "GSINIT4", "GSINIT5"
+            };
+
+            return __CODE_SEG_LI.Contains(ctx.segment);
+        }
 
         public override void ExitLabel([NotNull] SdAsmParser.LabelContext context)
         {
@@ -1007,7 +1069,7 @@ namespace sdcc_asm_optimizer
             {
                 AsmSrcContext.Flush(context);
                 AsmSrcContext.label = ctx.Identifier().GetText();
-                AsmSrcContext.type = CODE_SEG_LI.Contains(AsmSrcContext.segment) ? SymbolType.Function : SymbolType.Variable;
+                AsmSrcContext.type = IsFunctionSym(AsmSrcContext) ? SymbolType.Function : SymbolType.Variable;
                 AsmSrcContext.startLine = ctx.Start.Line - 1;
                 AsmSrcContext.isGlobal = context.Colon().Length > 1;
             }
@@ -1039,6 +1101,7 @@ namespace sdcc_asm_optimizer
                         name = absAddrExpr.Identifier().GetText(),
                         symType = SymbolType.Variable,
                         seg = AsmSrcContext.segment,
+                        segOpts = AsmSrcContext.segmentOpts,
                         startLine = context.Start.Line - 1,
                         stopLine = context.Start.Line - 1,
                         refs = new()

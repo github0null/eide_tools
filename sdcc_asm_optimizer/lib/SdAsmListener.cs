@@ -91,15 +91,25 @@ public interface ISdAsmListener : IParseTreeListener {
 	/// <param name="context">The parse tree.</param>
 	void ExitSegment([NotNull] SdAsmParser.SegmentContext context);
 	/// <summary>
-	/// Enter a parse tree produced by <see cref="SdAsmParser.segmentSpec"/>.
+	/// Enter a parse tree produced by <see cref="SdAsmParser.segmentName"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
-	void EnterSegmentSpec([NotNull] SdAsmParser.SegmentSpecContext context);
+	void EnterSegmentName([NotNull] SdAsmParser.SegmentNameContext context);
 	/// <summary>
-	/// Exit a parse tree produced by <see cref="SdAsmParser.segmentSpec"/>.
+	/// Exit a parse tree produced by <see cref="SdAsmParser.segmentName"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
-	void ExitSegmentSpec([NotNull] SdAsmParser.SegmentSpecContext context);
+	void ExitSegmentName([NotNull] SdAsmParser.SegmentNameContext context);
+	/// <summary>
+	/// Enter a parse tree produced by <see cref="SdAsmParser.segmentOpts"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void EnterSegmentOpts([NotNull] SdAsmParser.SegmentOptsContext context);
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="SdAsmParser.segmentOpts"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void ExitSegmentOpts([NotNull] SdAsmParser.SegmentOptsContext context);
 	/// <summary>
 	/// Enter a parse tree produced by <see cref="SdAsmParser.bootAddr"/>.
 	/// </summary>

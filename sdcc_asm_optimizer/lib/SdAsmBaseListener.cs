@@ -108,17 +108,29 @@ public partial class SdAsmBaseListener : ISdAsmListener {
 	/// <param name="context">The parse tree.</param>
 	public virtual void ExitSegment([NotNull] SdAsmParser.SegmentContext context) { }
 	/// <summary>
-	/// Enter a parse tree produced by <see cref="SdAsmParser.segmentSpec"/>.
+	/// Enter a parse tree produced by <see cref="SdAsmParser.segmentName"/>.
 	/// <para>The default implementation does nothing.</para>
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
-	public virtual void EnterSegmentSpec([NotNull] SdAsmParser.SegmentSpecContext context) { }
+	public virtual void EnterSegmentName([NotNull] SdAsmParser.SegmentNameContext context) { }
 	/// <summary>
-	/// Exit a parse tree produced by <see cref="SdAsmParser.segmentSpec"/>.
+	/// Exit a parse tree produced by <see cref="SdAsmParser.segmentName"/>.
 	/// <para>The default implementation does nothing.</para>
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
-	public virtual void ExitSegmentSpec([NotNull] SdAsmParser.SegmentSpecContext context) { }
+	public virtual void ExitSegmentName([NotNull] SdAsmParser.SegmentNameContext context) { }
+	/// <summary>
+	/// Enter a parse tree produced by <see cref="SdAsmParser.segmentOpts"/>.
+	/// <para>The default implementation does nothing.</para>
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	public virtual void EnterSegmentOpts([NotNull] SdAsmParser.SegmentOptsContext context) { }
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="SdAsmParser.segmentOpts"/>.
+	/// <para>The default implementation does nothing.</para>
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	public virtual void ExitSegmentOpts([NotNull] SdAsmParser.SegmentOptsContext context) { }
 	/// <summary>
 	/// Enter a parse tree produced by <see cref="SdAsmParser.bootAddr"/>.
 	/// <para>The default implementation does nothing.</para>

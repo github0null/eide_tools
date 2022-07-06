@@ -24,6 +24,7 @@ directive
     : '.' ('16bit' | '24bit' | '32bit')
     | '.' 'module' moduleName
     | '.' 'optsdcc' sdccOpts+
+    | '.' 'local' Identifier (',' Identifier)*
     ;
 
 moduleName
@@ -35,11 +36,15 @@ sdccOpts
     ;
 
 segment
-    : '.' SegmentType segmentSpec
+    : '.' SegmentType segmentName ('(' segmentOpts (',' segmentOpts)* ')')?
     ;
 
-segmentSpec
-    : Identifier (Identifier | '(' (segmentSpec ','?)+ ')')*
+segmentName
+    : Identifier
+    ;
+
+segmentOpts
+    : Identifier (Assign Identifier)?
     ;
 
 bootAddr
@@ -215,7 +220,7 @@ CRLF: '\r'? '\n';
 
 // identifiers
 
-SegmentType: 'globl' | 'area' | 'local' | 'bank';
+SegmentType: 'globl' | 'area' | 'bank';
 
 DataType: 'ascii' | 'byte' | 'db' | 'ds' | 'dw' | 'dd';
 
