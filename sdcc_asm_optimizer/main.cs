@@ -373,7 +373,33 @@ namespace sdcc_asm_optimizer
                 for (int i = startIdx; i < stopIdx + 1; i++) lines[i].Insert(0, ';');
             };
 
-            // gen main module
+            // stable prepend statement
+            string[] stablePrependLines = Array.Empty<string>();
+            {
+                //
+                // for sdcc-mcs51, we need predefine 'ar0~ar7' 
+                // register addr and export them
+                //
+                if (ctx.assemblerName == "mcs51")
+                {
+                    List<string> lines = new(1024);
+
+                    lines.AddRange(new string[] {
+                        ";--------------------------------------------------------",
+                        "; Generate by eide.sdcc_asm_optimizer",
+                        ";--------------------------------------------------------"
+                    });
+
+                    for (int i = 0; i < 8; i++)
+                        lines.Add(string.Format("\tar{0} = 0x0{0}", i));
+
+                    lines.Add("");
+
+                    stablePrependLines = lines.ToArray();
+                }
+            }
+
+            // gen base module
             {
                 string srcFileName = outDirPath + Path.DirectorySeparatorChar + ObtainFileName(true);
                 StringBuilder[] srcLines = srcRawLines.Select(l => new StringBuilder(l)).ToArray();
@@ -420,35 +446,7 @@ namespace sdcc_asm_optimizer
                 }
 
                 var fLines = srcLines.Select(sl => sl.ToString()).ToList();
-
-                // append some defines
-                if (ctx.assemblerName == "mcs51")
-                {
-                    List<string> prependLines = new(1024);
-
-                    prependLines.AddRange(new string[] {
-                        ";--------------------------------------------------------",
-                        "; Generate by eide.sdcc_asm_optimizer",
-                        ";--------------------------------------------------------"
-                    });
-
-                    for (int i = 0; i < 8; i++)
-                        prependLines.Add(string.Format("\t.globl ar{0}", i));
-
-                    prependLines.Add("");
-
-                    for (int i = 0; i < 8; i++)
-                        prependLines.Add(string.Format("\tar{0} = 0x0{0}", i));
-
-                    prependLines.Add("");
-
-                    prependLines.AddRange(fLines);
-
-                    fLines = prependLines;
-                }
-
-                // gen files
-                File.WriteAllLines(srcFileName, fLines);
+                File.WriteAllLines(srcFileName, stablePrependLines.Concat(fLines));
                 mFiles.Add(srcFileName);
             }
 
@@ -503,8 +501,8 @@ namespace sdcc_asm_optimizer
                     DisableLines(srcLines, lineIdx, lineIdx);
 
                 // gen files
-                var wLines = srcLines.Select(sl => sl.ToString()).ToArray();
-                File.WriteAllLines(srcFileName, wLines);
+                var fLines = srcLines.Select(sl => sl.ToString()).ToArray();
+                File.WriteAllLines(srcFileName, stablePrependLines.Concat(fLines));
                 mFiles.Add(srcFileName);
             }
 
@@ -834,9 +832,7 @@ namespace sdcc_asm_optimizer
                 .Concat(forceLocalVarSyms)
                 .Distinct().ToArray();
 
-            string[] ignoredSeg = {
-                "RSEG"
-            };
+            string[] ignoredSeg = { "RSEG" };
 
             ignoreDetachSyms = symbols.Where(sym => ignoredSeg.Contains(sym.seg)).ToArray();
         }
@@ -1056,7 +1052,7 @@ namespace sdcc_asm_optimizer
         private bool IsFunctionSym(AsmContext ctx)
         {
             string[] __CODE_SEG_LI = {
-                "HOME", "GSINIT","GSFINAL", "CODE", "CSEG",
+                "HOME", "GSINIT","GSFINAL", "CODE", "CSEG", "_CODE",
                 "GSINIT0", "GSINIT1", "GSINIT2", "GSINIT3", "GSINIT4", "GSINIT5"
             };
 
