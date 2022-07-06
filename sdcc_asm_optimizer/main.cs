@@ -427,9 +427,9 @@ namespace sdcc_asm_optimizer
                     List<string> prependLines = new(1024);
 
                     prependLines.AddRange(new string[] {
-                        ";",
+                        ";--------------------------------------------------------",
                         "; Generate by eide.sdcc_asm_optimizer",
-                        ";"
+                        ";--------------------------------------------------------"
                     });
 
                     for (int i = 0; i < 8; i++)
