@@ -452,15 +452,15 @@ namespace sdcc_asm_optimizer
 
                 // disable noused import decl
                 {
-                    List<string> inUsedGloblSyms = new(64);
+                    List<string> inUsedSyms = new(64);
                     foreach (var sym in symGrpForFile)
                     {
-                        inUsedGloblSyms.Add(sym.name);
-                        foreach (var name in sym.refs) inUsedGloblSyms.Add(name);
+                        inUsedSyms.Add(sym.name);
+                        foreach (var name in sym.refs) inUsedSyms.Add(name);
                     }
 
                     var unusedGloblSyms =
-                        ctx.globSymImportLineMap.Keys.Where(name => !inUsedGloblSyms.Contains(name));
+                        ctx.globSymImportLineMap.Keys.Where(name => !inUsedSyms.Contains(name));
                     foreach (var symName in unusedGloblSyms)
                     {
                         if (ctx.globSymImportLineMap.ContainsKey(symName))
