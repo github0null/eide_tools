@@ -3132,7 +3132,10 @@ namespace unify_builder
             if (secList.TryGetValue("SSEG", out var ssegInf) &&
                 ssegInf.size == 1)
             {
-                stack_prompt_txt = ", Stack Size: Auto (MCU_RAM_SIZE - ALLOCATED_RAM_SIZE)";
+                if (ram_max_size > 0)
+                    stack_prompt_txt = string.Format(", Stack Size: {0} Bytes (MCU_RAM_SIZE - RAM_TOTAL)", ram_max_size - ramSize);
+                else
+                    stack_prompt_txt = ", Stack Size: Auto (MCU_RAM_SIZE - RAM_TOTAL)";
             }
 
             int maxPadWidth = (ramSize > romSize ? ramSize : romSize).ToString().Length;
