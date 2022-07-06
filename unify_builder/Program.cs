@@ -11,6 +11,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using CommandLine;
+using CommandLine.Text;
 
 // 有关程序集的一般信息由以下
 // 控制。更改这些特性值可修改
@@ -1401,8 +1403,8 @@ namespace unify_builder
             string exeFullPath = getToolFullPathById(modelName);
 
             // save raw compiler args
-            FileInfo paramFile = new FileInfo(outName + paramsSuffix);
-            File.WriteAllText(paramFile.FullName, commandLines, encodings[modelName]);
+            FileInfo paramFile = new(outName + paramsSuffix);
+            if (onlyCmd == false) File.WriteAllText(paramFile.FullName, commandLines, encodings[modelName]);
 
             // if compiler support read args from file
             // we need to regen compiler args
@@ -1834,6 +1836,24 @@ namespace unify_builder
          *      -force-color            force apply color for output
          */
 
+        public class Options
+        {
+            [Option('v', Required = false, HelpText = "print app version")]
+            public bool PrintVersion { get; set; }
+
+            [Option('r', "run", Required = false, HelpText = "run commands json file path")]
+            public string RunCommandsJsonPath { get; set; }
+
+            [Option('p', "params-file", Required = false, HelpText = "builder params file path")]
+            public string ParamsFilePath { get; set; }
+
+            [Option("no-color", Required = false, HelpText = "close color render for output")]
+            public bool NotUseColor { get; set; }
+
+            [Option("force-color", Required = false, HelpText = "force apply color render for output")]
+            public bool ForceUseColor { get; set; }
+        }
+
         // linux VT100 color
         // https://docs.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences?redirectedfrom=MSDN#samples
         // 
@@ -1843,14 +1863,65 @@ namespace unify_builder
         public static extern bool GetConsoleMode(IntPtr handle, out int mode);
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern IntPtr GetStdHandle(int handle);
-        static int Main(string[] args)
+        static int Main(string[] args_)
         {
-            bool supportColorRenderer = true;
+            Options cliArgs = null;
+
+            //
+            // parse cli args
+            //
+            {
+                var parserResult = new CommandLine.Parser(with => with.HelpWriter = null)
+                .ParseArguments<Options>(args_);
+
+                var hTxt = HelpText.AutoBuild(parserResult, h => {
+                    h.AutoVersion = false;
+                    return HelpText.DefaultParsingErrorsHandler(parserResult, h);
+                }, e => e);
+
+                parserResult.WithNotParsed(errs => {
+                    log(OsInfo.instance().CRLF + hTxt);
+                });
+
+                cliArgs = parserResult.Value;
+            }
+
+            //
+            // check, convert cli args
+            //
+
+            if (cliArgs == null)
+                return CODE_ERR;
+
+            if (cliArgs.PrintVersion)
+            {
+                printAppInfo();
+                return CODE_DONE;
+            }
+
+            if (string.IsNullOrEmpty(cliArgs.RunCommandsJsonPath) &&
+                string.IsNullOrEmpty(cliArgs.ParamsFilePath))
+            {
+                errorWithLable("params too less !, we need 'builder.params' or 'commands.json' file path !");
+                return CODE_ERR;
+            }
+
+            if (!string.IsNullOrEmpty(cliArgs.ParamsFilePath))
+                cliArgs.ParamsFilePath = Path.GetFullPath(cliArgs.ParamsFilePath);
+
+            if (!string.IsNullOrEmpty(cliArgs.RunCommandsJsonPath))
+                cliArgs.RunCommandsJsonPath = Path.GetFullPath(cliArgs.RunCommandsJsonPath);
+
+            //
+            // program start
+            //
+
+            bool systemSupportColorRenderer = true;
 
             // init cwd
             resetWorkDir();
 
-            // new line
+            // print new line
             // log("");
 
             // try to enable VT100 console color
@@ -1866,74 +1937,30 @@ namespace unify_builder
                     if (handle != INVALID_HANDLE_VALUE)
                     {
                         GetConsoleMode(handle, out int mode);
-                        supportColorRenderer = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                        systemSupportColorRenderer = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
                     }
                     else
                     {
-                        supportColorRenderer = false;
+                        systemSupportColorRenderer = false;
                     }
                 }
                 catch (Exception)
                 {
-                    supportColorRenderer = false;
+                    systemSupportColorRenderer = false;
                 }
             }
 
-            // print app info
-            if (args.Length == 1 && args[0].ToLower() == "-v")
-            {
-                printAppInfo();
-                return CODE_DONE;
-            }
-
-            // init
+            // init all params
             try
             {
-                Dictionary<string, string[]> paramsTable = new Dictionary<string, string[]>();
-
-                /* init params */
-                for (int i = 0; i < args.Length;)
-                {
-                    try
-                    {
-                        if (args[i].StartsWith("-")) // is cmd
-                        {
-                            // next params is data
-                            if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                            {
-                                if (paramsTable.ContainsKey(args[i])) paramsTable.Remove(args[i]);
-                                paramsTable.Add(args[i], args[i + 1].Split(';'));
-                                i += 2;
-                            }
-
-                            // next params is cmd
-                            else
-                            {
-                                if (paramsTable.ContainsKey(args[i])) paramsTable.Remove(args[i]);
-                                paramsTable.Add(args[i], new string[] { });
-                                i++;
-                            }
-                        }
-                        else // skip invalid cmd
-                        {
-                            i++;
-                        }
-                    }
-                    catch (ArgumentException err)
-                    {
-                        errorWithLable("params format failed !, " + err.Message);
-                        return CODE_ERR;
-                    }
-                }
-
-                /* is command runner ? */
-                if (paramsTable.ContainsKey("-r"))
+                /* start commands runner ? */
+                if (!string.IsNullOrEmpty(cliArgs.RunCommandsJsonPath))
                 {
                     try
                     {
                         List<CommandInfo> cmds = new List<CommandInfo>();
                         JArray jobj = JArray.Parse(
-                            File.ReadAllText(paramsTable["-r"][0], RuntimeEncoding.instance().UTF8)
+                            File.ReadAllText(cliArgs.RunCommandsJsonPath, RuntimeEncoding.instance().UTF8)
                         );
 
                         foreach (JObject item in jobj)
@@ -2004,8 +2031,7 @@ namespace unify_builder
                 /* load params */
                 try
                 {
-                    // get params
-                    paramsFilePath = paramsTable["-p"][0];
+                    paramsFilePath = cliArgs.ParamsFilePath;
 
                     // load params file
                     string paramsJson = File.ReadAllText(paramsFilePath, RuntimeEncoding.instance().UTF8);
@@ -2065,9 +2091,9 @@ namespace unify_builder
                 prepareParams(paramsObj);
 
                 // other bool options
-                supportColorRenderer = !paramsTable.ContainsKey("-no-color");
-                bool forceUseColorRender = paramsTable.ContainsKey("-force-color");
-                colorRendererEnabled = supportColorRenderer || forceUseColorRender;
+                systemSupportColorRenderer = !cliArgs.NotUseColor;
+                bool forceUseColorRender = cliArgs.ForceUseColor;
+                colorRendererEnabled = systemSupportColorRenderer || forceUseColorRender;
 
                 // load builder mode
                 if (paramsObj.ContainsKey("buildMode"))

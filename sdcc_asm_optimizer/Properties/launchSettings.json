@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "sdcc_asm_optimizer": {
+      "commandName": "Project",
+      "commandLineArgs": "-w \"C:\\Users\\Administrator\\Desktop\\stm8s-test-bk\\APP\\EIDE\"\r\n-o \"build/test\"\r\n--compiler-args \"\\\"--std-c99 -c -mstm8 --peep-asm --peep-return --opt-code-size -I.\\.. -I.\\..\\..\\Libraries\\STM8S_StdPeriph_Driver\\inc -DSTM8S003 -MMD -o ${out} ${in}\\\"\"\r\n--compiler-dir \"C:\\Users\\Administrator\\.eide\\tools\\sdcc\\bin\"\r\n../main.c"
+    }
+  }
+}

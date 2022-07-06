@@ -78,8 +78,6 @@ namespace sdcc_asm_optimizer
         public static readonly int CODE_ERR = 1;
         public static readonly int CODE_DONE = 0;
 
-        static readonly Regex cSourceMatcher = new(@"\.(c)$", RegexOptions.IgnoreCase | RegexOptions.Compiled); // file filters
-
         static readonly Dictionary<string, string> AssemblerMap = new() {
             { "mcs51", "8051" },
             { "ds390", "390" },
@@ -89,6 +87,10 @@ namespace sdcc_asm_optimizer
             { "r2k", "rab" },
             { "gbz80", "gb" },
             { "ez80_z80", "z80" }
+        };
+
+        static readonly string[] supportedAssembler = {
+            "mcs51", "stm8"
         };
 
         //
@@ -126,16 +128,6 @@ namespace sdcc_asm_optimizer
                 if (cliOptions.EntryName == null)
                     cliOptions.EntryName = "main";
 
-                var incompatibleSrcFiles = cliOptions.InputSrcFiles
-                    .Any(p => !cSourceMatcher.IsMatch(p));
-
-                if (incompatibleSrcFiles)
-                {
-                    var fLi = cliOptions.InputSrcFiles.ToList();
-                    var fIdx = fLi.FindIndex(p => !cSourceMatcher.IsMatch(p));
-                    throw new Exception(string.Format("we not support this source file: '{0}'", fLi[fIdx]));
-                }
-
                 // handle files
                 foreach (var srcFilePath in cliOptions.InputSrcFiles)
                 {
@@ -151,17 +143,19 @@ namespace sdcc_asm_optimizer
                     StdErr.Write(allOut); // pass compiler out -> stderr
                     if (eCode != CODE_DONE) return eCode;
 
-                    // split modules
+                    // parse asm source
                     StringWriter pStdOut = new(), pStdErr = new();
                     SourceContext parserCtx = ParseSourceFile(fOutPath, pStdOut, pStdErr);
                     if (cliOptions.OnlyTestSourceFile) continue; // if it's test mode, ignore split
-                    if (pStdErr.GetStringBuilder().Length != 0)
-                        throw new Exception("Parser Error: " + pStdErr.ToString());
-                    var outFiles = SplitAndGenerateFiles(parserCtx);
+                    if (pStdErr.GetStringBuilder().Length != 0) throw new Exception("Parser Error: " + pStdErr.ToString());
+
+                    // split modules
+                    string[] outFiles = Array.Empty<string>();
+                    if (supportedAssembler.Contains(parserCtx.assemblerName)) outFiles = SplitAndGenerateFiles(parserCtx);
 
                     // compile modules
                     outLines.Add("---> " + srcFilePath);
-                    if (outFiles.Length == 0) outFiles = new string[] { fOutPath }; // use origin file
+                    if (outFiles.Length == 0) outFiles = new string[] { fOutPath }; // if not need split, use origin file
                     var oLi = CompileModuleFiles(parserCtx.assemblerName, outFiles);
                     foreach (var p in oLi) outLines.Add(p);
                     outLines.Add("<---");
@@ -199,31 +193,104 @@ namespace sdcc_asm_optimizer
             return string.Join(Path.DirectorySeparatorChar, pList);
         }
 
-        private static string[] CompileModuleFiles(string assemblerName, string[] files)
+        struct CompileWorkerData
         {
+            public ManualResetEvent evtDone;
+            public string[] files;
+        };
+
+        private static string[] CompileModuleFiles(string assemblerName, string[] inFiles)
+        {
+            Exception err = null;
             List<string> outFiles = new(64);
 
-            string assembler = assemblerName;
+            // calcu thread number
+            int threadNum = 2;
+            if (inFiles.Length >= 15) threadNum = 3;
+            if (inFiles.Length >= 24) threadNum = 4;
 
             // remap assembler name
-            if (AssemblerMap.ContainsKey(assemblerName))
+            if (AssemblerMap.ContainsKey(assemblerName)) assemblerName = AssemblerMap[assemblerName];
+
+            // worker
+            ParameterizedThreadStart worker = delegate (object _dat) {
+
+                CompileWorkerData workerParams = (CompileWorkerData)_dat;
+
+                foreach (var path in workerParams.files)
+                {
+                    if (err != null) break;
+
+                    try
+                    {
+                        var fin = path;
+                        var fou = Path.ChangeExtension(path, objSuffix);
+                        var asArgs = "-plosgffw ${out} ${in}"
+                            .Replace("${in}", "\"" + fin + "\"")
+                            .Replace("${out}", "\"" + fou + "\"");
+                        var exitCode = Execute("sdas" + assemblerName, asArgs, out string out_, out string __);
+                        lock (StdErr) { StdErr.Write(out_); } // pass compiler out -> stderr
+                        if (exitCode != CODE_DONE) throw new Exception("compiler error at: " + fin);
+                        lock (outFiles) { outFiles.Add(fou); }
+                    }
+                    catch (Exception err_)
+                    {
+                        err = err_;
+                        break;
+                    }
+                }
+
+                workerParams.evtDone.Set();
+            };
+
+            List<List<string>> fileGrps = new(32);
+            Queue<string> allFiles = new(inFiles);
+            int filesPerThread = (inFiles.Length / threadNum) + 1;
+
+            while (allFiles.Count > 0)
             {
-                assembler = AssemblerMap[assemblerName];
+                List<string> li = new(32);
+
+                for (int i = 0; i < filesPerThread; i++)
+                {
+                    if (allFiles.TryDequeue(out string f))
+                        li.Add(f);
+                    else
+                        break;
+                }
+
+                if (li.Count > 0)
+                    fileGrps.Add(li);
             }
 
-            foreach (var path in files)
+            if (fileGrps.Count > 1) // real grp number > 1, use multi-thread
             {
-                var fin = path;
-                var fou = Path.ChangeExtension(path, objSuffix);
-                var asArgs = "-plosgffw ${out} ${in}"
-                    .Replace("${in}", "\"" + fin + "\"")
-                    .Replace("${out}", "\"" + fou + "\"");
+                ManualResetEvent[] tEvents = new ManualResetEvent[fileGrps.Count];
 
-                var exitCode = Execute("sdas" + assembler, asArgs, out string out_, out string __);
-                StdErr.Write(out_); // pass compiler out -> stderr
-                if (exitCode != CODE_DONE) throw new Exception("compile error at: " + fin);
-                outFiles.Add(fou);
+                for (int i = 0; i < fileGrps.Count; i++)
+                {
+                    tEvents[i] = new(false);
+
+                    new Thread(worker).Start(new CompileWorkerData {
+                        evtDone = tEvents[i],
+                        files = fileGrps[i].ToArray()
+                    });
+                }
+
+                WaitHandle.WaitAll(tEvents);
             }
+
+            else // we don't need multi-thread
+            {
+                worker(new CompileWorkerData {
+                    evtDone = new ManualResetEvent(false),
+                    files = inFiles
+                });
+            }
+
+            if (err != null) throw err;
+
+            outFiles.Sort();
 
             return outFiles.ToArray();
         }
@@ -382,7 +449,7 @@ namespace sdcc_asm_optimizer
                 //
                 if (ctx.assemblerName == "mcs51")
                 {
-                    List<string> lines = new(1024);
+                    List<string> lines = new(64);
 
                     lines.AddRange(new string[] {
                         ";--------------------------------------------------------",
