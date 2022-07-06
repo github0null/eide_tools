@@ -17,8 +17,6 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "axf2elf", "axf2elf\axf2elf.
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "sdcc_asm_optimizer", "sdcc_asm_optimizer\sdcc_asm_optimizer.csproj", "{4F4F27EB-8421-4A90-A2D7-BC0749C4387D}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "source_splitter", "sdcc_source_splitter\source_splitter.csproj", "{A6072C42-35E9-4E0B-97A6-ED8D0A03288E}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
