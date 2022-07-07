@@ -78,7 +78,7 @@ statement
     ;
 
 absAddrAllocExpr
-    : Identifier Assign Number
+    : Identifier assignmentOperator Number
     ;
 
 instruction
@@ -91,7 +91,7 @@ expressions
 
 expr
     : expr operator expr
-    | operator operand
+    | ('+' | '-' | '~' | unaryOperator) operand
     | operand '.' Number
     | operand
     | ('#' unaryOperator? | unaryOperator | Number)? '(' expressions+ ')'
