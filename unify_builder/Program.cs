@@ -372,10 +372,17 @@ namespace unify_builder
                 }
             }
 
+            var GetRealToolName = delegate (Dictionary<string, JObject> userParamsObj, string modName) {
+                if (!userParamsObj[modName].ContainsKey("$use")) return modName;
+                var name = userParamsObj[modName]["$use"].Value<string>().Replace(modName + '-', "");
+                if (string.IsNullOrWhiteSpace(name)) return modName;
+                return modName + '-' + name;
+            };
+
             // init compiler models
             string cCompilerName = ((JObject)cModel["groups"]).ContainsKey("c/cpp") ? "c/cpp" : "c";
             string cppCompilerName = ((JObject)cModel["groups"]).ContainsKey("c/cpp") ? "c/cpp" : "cpp";
-            string linkerName = paramObj["linker"].ContainsKey("$use") ? paramObj["linker"]["$use"].Value<string>() : "linker";
+            string linkerName = GetRealToolName(paramObj, "linker");
 
             if (!((JObject)cModel["groups"]).ContainsKey(cCompilerName))
                 throw new Exception("Not found c compiler model");
@@ -391,7 +398,8 @@ namespace unify_builder
             models.Add("linker", (JObject)cModel["groups"][linkerName]);
 
             // init asm compiler models and params
-            asmCompilerName = paramObj["asm"].ContainsKey("$use") ? paramObj["asm"]["$use"].Value<string>() : "asm";
+            asmCompilerName = GetRealToolName(paramObj, "asm");
+
             if (asmCompilerName == "asm-auto")
             {
                 models.Add("asm", (JObject)cModel["groups"]["asm"]);
@@ -723,6 +731,13 @@ namespace unify_builder
                 }
 
                 cmdLists.Add(name, commandList.ToArray());
+            }
+        }
+
+        public bool IsUseSdccModuleOptimizer
+        {
+            get {
+                return compilerAttr_sdcc_module_split;
             }
         }
 
@@ -2646,6 +2661,8 @@ namespace unify_builder
                 else
                 {
                     int threads = calcuThreads(reqThreadsNum, commands.Count);
+                    // reduce thread number, because module optimizer is also a multi-thread program.
+                    if (cmdGen.IsUseSdccModuleOptimizer && threads >= 6) threads -= 2;
                     compileByMulThread(threads, commands.Values.ToArray(), errLogs);
                 }
 
@@ -3659,7 +3676,7 @@ namespace unify_builder
                         if (isBuildEnd && ccLogQueue.Count == 0)
                             break; // exit
 
-                        if (ccLogQueue.TryTake(out CompilerLogData logData, 200))
+                        if (ccLogQueue.TryTake(out CompilerLogData logData, 100))
                         {
                             string compilerTag = logData.srcInfo.compilerType == "asm" ? "AS" : "CC";
                             string humanRdPath = toHumanReadablePath(logData.srcInfo.sourcePath);
