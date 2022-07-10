@@ -17,6 +17,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "axf2elf", "axf2elf\axf2elf.
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "sdcc_asm_optimizer", "sdcc_asm_optimizer\sdcc_asm_optimizer.csproj", "{4F4F27EB-8421-4A90-A2D7-BC0749C4387D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "verchk", "verchk\verchk.csproj", "{211F8E0E-51E4-4777-8EEB-BC6588065653}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -39,10 +41,10 @@ Global
 		{4F4F27EB-8421-4A90-A2D7-BC0749C4387D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4F4F27EB-8421-4A90-A2D7-BC0749C4387D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4F4F27EB-8421-4A90-A2D7-BC0749C4387D}.Release|Any CPU.Build.0 = Release|Any CPU
-		{A6072C42-35E9-4E0B-97A6-ED8D0A03288E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{A6072C42-35E9-4E0B-97A6-ED8D0A03288E}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{A6072C42-35E9-4E0B-97A6-ED8D0A03288E}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{A6072C42-35E9-4E0B-97A6-ED8D0A03288E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{211F8E0E-51E4-4777-8EEB-BC6588065653}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{211F8E0E-51E4-4777-8EEB-BC6588065653}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{211F8E0E-51E4-4777-8EEB-BC6588065653}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{211F8E0E-51E4-4777-8EEB-BC6588065653}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
