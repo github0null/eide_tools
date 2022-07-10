@@ -55,7 +55,7 @@ namespace unify_builder
 
         public static TargetType[] map<Type, TargetType>(IEnumerable<Type> iterator, MapCallBk<Type, TargetType> callBk)
         {
-            List<TargetType> res = new List<TargetType>(16);
+            List<TargetType> res = new(16);
 
             foreach (var item in iterator)
             {
@@ -82,7 +82,7 @@ namespace unify_builder
 
         public static string formatPath(string path_)
         {
-            List<string> pList = new List<string>();
+            List<string> pList = new(256);
 
             // delete '.'
             {
@@ -135,7 +135,7 @@ namespace unify_builder
 
             // ---
 
-            List<string> rePath = new List<string>(256);
+            List<string> rePath = new(256);
 
             // push parent path '..'
             for (int i = 0; i < rootList.Length - comLen; i++)
@@ -302,15 +302,14 @@ namespace unify_builder
             "$includes", "$defines", "$libs"
         };
 
-        private readonly Dictionary<string, Encoding> encodings = new Dictionary<string, Encoding>();
+        private readonly Dictionary<string, Encoding> encodings = new(8);
 
-        private readonly Dictionary<string, string[]> cmdLists = new Dictionary<string, string[]>();
-        private readonly Dictionary<string, JObject> paramObj = new Dictionary<string, JObject>();
-        private readonly Dictionary<string, JObject> models = new Dictionary<string, JObject>();
+        private readonly Dictionary<string, string[]> cmdLists = new(512);
+        private readonly Dictionary<string, JObject> paramObj = new(8);
+        private readonly Dictionary<string, JObject> models = new(8);
 
-        private readonly Dictionary<string, Dictionary<string, CmdFormat>> formats =
-            new Dictionary<string, Dictionary<string, CmdFormat>>();
-        private readonly Dictionary<string, InvokeFormat> invokeFormats = new Dictionary<string, InvokeFormat>();
+        private readonly Dictionary<string, Dictionary<string, CmdFormat>> formats = new(16);
+        private readonly Dictionary<string, InvokeFormat> invokeFormats = new(16);
 
         private readonly string toolPrefix; // compiler prefix, like: arm-none-eabi-
         private readonly string toolId;     // compiler ID
@@ -327,15 +326,15 @@ namespace unify_builder
 
         private readonly bool compilerAttr_sdcc_module_split = false; // one-module-per-function for sdcc
 
-        private readonly JObject model;
-        private readonly JObject parameters;
+        private readonly JObject model;         // compiler model obj
+        private readonly JObject parameters;    // builder.params obj
 
         public string compilerName { get; }     // complier short name
         public string compilerVersion { get; }  // compiler version string, like: '5.06 update 6 (build 750)'
         public string compilerFullName { get; } // compiler full name (contain version string)
 
-        private readonly Dictionary<string, int> objNameMap = new Dictionary<string, int>();
-        private readonly Dictionary<string, string> srcParams = new Dictionary<string, string>();
+        private readonly Dictionary<string, int> objNameMap = new(512);
+        private readonly Dictionary<string, string> srcParams = new(512);
 
         public string asmCompilerName;  // asm compiler type we used
 
@@ -504,8 +503,9 @@ namespace unify_builder
             // try to get compiler fullname and version
 
             // init default value
-            compilerName = this.getModelName();
+            compilerName = getModelName();
             compilerVersion = null;
+            compilerFullName = compilerName;
 
             // parse from compiler
             try
@@ -515,7 +515,7 @@ namespace unify_builder
 
                 if (vMatcher != null)
                 {
-                    Regex matcher = new Regex(vMatcher["matcher"].Value<string>(), RegexOptions.IgnoreCase);
+                    var matcher = new Regex(vMatcher["matcher"].Value<string>(), RegexOptions.IgnoreCase);
                     int eCode = Program.runExe(exePath, vMatcher["args"].Value<string>(), out string output);
 
                     // ignore exit code for keil_c51 compiler
@@ -541,6 +541,9 @@ namespace unify_builder
                                     compilerVersion = res.Groups["version"].Value;
                                 }
 
+                                // full name is the full matched txt
+                                compilerFullName = line.Trim();
+
                                 break; // found it, exit
                             }
                         }
@@ -553,13 +556,10 @@ namespace unify_builder
             }
 
             // if compiler name is empty, use default name
-            if (String.IsNullOrWhiteSpace(compilerName))
+            if (string.IsNullOrWhiteSpace(compilerName))
             {
-                compilerName = this.getModelName();
+                compilerName = getModelName();
             }
-
-            // set full name
-            compilerFullName = (compilerName + " " + (compilerVersion ?? "")).Trim();
 
             // set encodings
             foreach (string modelName in models.Keys)
@@ -599,7 +599,7 @@ namespace unify_builder
             {
                 JObject modelParams = models[modelName];
 
-                Dictionary<string, CmdFormat> properties = new Dictionary<string, CmdFormat>();
+                Dictionary<string, CmdFormat> properties = new(32);
                 foreach (string key in formatKeyList)
                 {
                     if (modelParams.ContainsKey(key))
@@ -623,7 +623,7 @@ namespace unify_builder
             {
                 string name = model.Key;
                 JObject cmpModel = model.Value;
-                List<string> commandList = new List<string>();
+                List<string> commandList = new(256);
 
                 JObject[] cmpParams = {
                     globalParams,
@@ -872,8 +872,8 @@ namespace unify_builder
             // cmd: sdar -rcv ${out} ${in}
             if (!cliTestMode && compilerId == "SDCC" && checkEntryOrderForSdcc)
             {
-                List<string> finalObjsLi = new List<string>(128); // must be absolute path
-                List<string> bundledList = new List<string>(128); // must be relative path
+                List<string> finalObjsLi = new(128); // must be absolute path
+                List<string> bundledList = new(128); // must be relative path
 
                 // make entry src file at the first of cli args
                 {
@@ -1018,11 +1018,12 @@ namespace unify_builder
             // gen .map.view for eide
             try
             {
-                string mapViewPath = outName + ".map.view";
-                List<string> cont = new List<string>();
-                cont.Add("tool: " + toolId);
-                cont.Add("fileName: " + Path.GetFileName(mapPath));
-                File.WriteAllLines(mapViewPath, cont, RuntimeEncoding.instance().UTF8);
+                string[] cont = new string[] {
+                    "tool: " + toolId,
+                    "fileName: " + Path.GetFileName(mapPath)
+                };
+
+                File.WriteAllLines(outName + ".map.view", cont, RuntimeEncoding.instance().UTF8);
             }
             catch (Exception)
             {
@@ -1043,7 +1044,7 @@ namespace unify_builder
         public CmdInfo[] genOutputCommand(string linkerOutputFile)
         {
             JObject linkerModel = models["linker"];
-            List<CmdInfo> commandsList = new List<CmdInfo>();
+            List<CmdInfo> commandsList = new();
 
             // not need output hex/bin
             if (!linkerModel.ContainsKey("$outputBin"))
@@ -1083,7 +1084,7 @@ namespace unify_builder
         public LinkerExCmdInfo[] genLinkerExtraCommand(string linkerOutputFile)
         {
             JObject linkerModel = models["linker"];
-            List<LinkerExCmdInfo> commandList = new List<LinkerExCmdInfo>();
+            List<LinkerExCmdInfo> commandList = new();
 
             // not have Extra Command
             if (!linkerModel.ContainsKey("$extraCommand"))
@@ -1115,6 +1116,11 @@ namespace unify_builder
         public string getOutName()
         {
             return parameters.ContainsKey("name") ? parameters["name"].Value<string>() : "main";
+        }
+
+        public string getBuildConfigName()
+        {
+            return parameters.ContainsKey("target") ? parameters["target"].Value<string>() : "Debug";
         }
 
         private string toAbsToolPath(string rawToolPath)
@@ -1170,7 +1176,7 @@ namespace unify_builder
         // merge value
         private object mergeParamsList(JObject[] pList, string key, string paramsType)
         {
-            List<JToken> objList = new List<JToken>();
+            List<JToken> objList = new(128);
 
             foreach (var param in pList)
             {
@@ -1228,7 +1234,7 @@ namespace unify_builder
                         break;
                     case JTokenType.Array: // string list
                         {
-                            List<string> list = new List<string>();
+                            List<string> list = new(64);
 
                             foreach (JToken jobj in objList)
                             {
@@ -1339,7 +1345,7 @@ namespace unify_builder
                     .Replace("${listPath}", toRelativePathForCompilerArgs(listPath, isQuote)));
             }
 
-            List<string> compiler_cmds = new List<string>(cmdLists[modelName]);
+            List<string> compiler_cmds = new(cmdLists[modelName]);
 
             // add independent commands for source
             if (srcParams.ContainsKey(fpath))
@@ -1480,7 +1486,7 @@ namespace unify_builder
                 path = Utility.toUnixPath(path);
             }
 
-            return (quote && path.Contains(" ")) ? ("\"" + path + "\"") : path;
+            return (quote && path.Contains(' ')) ? ("\"" + path + "\"") : path;
         }
 
         private string getUniqueName(string expectedName)
@@ -1577,7 +1583,7 @@ namespace unify_builder
                     break;
                 case "list":
                     {
-                        List<string> cmdList = new List<string>();
+                        List<string> cmdList = new();
 
                         string cmd = option["command"].Value<string>();
 
@@ -1604,18 +1610,14 @@ namespace unify_builder
 
         private string getIncludesCmdLine(string modelName, IEnumerable<string> incList)
         {
-            if (!formats[modelName].ContainsKey("$includes"))
-            {
-                return "";
-            }
+            if (!formats[modelName].ContainsKey("$includes")) return "";
 
-            List<string> cmds = new List<string>();
-            JObject cmpModel = models[modelName];
+            List<string> cmds = new(64);
             CmdFormat incFormat = formats[modelName]["$includes"];
 
             foreach (var inculdePath in incList)
             {
-                cmds.Add(incFormat.body.Replace("${value}", toRelativePathForCompilerArgs(inculdePath, !incFormat.noQuotes)));
+                cmds.Add(incFormat.body.Replace("${value}", toRelativePathForCompilerArgs(inculdePath, !incFormat.noQuotes, false)));
             }
 
             return incFormat.prefix + string.Join(incFormat.sep, cmds.ToArray()) + incFormat.suffix;
@@ -1628,8 +1630,7 @@ namespace unify_builder
                 return "";
             }
 
-            List<string> cmds = new List<string>();
-            JObject cmpModel = models[modelName];
+            List<string> cmds = new(64);
             CmdFormat defFormat = formats[modelName]["$defines"];
 
             foreach (var define in defList)
@@ -1717,12 +1718,12 @@ namespace unify_builder
                 return "";
             }
 
-            List<string> cmds = new List<string>();
+            List<string> cmds = new(64);
             CmdFormat incFormat = formats[modelName]["$libs"];
 
             foreach (var libDirPath in libList)
             {
-                cmds.Add(incFormat.body.Replace("${value}", toRelativePathForCompilerArgs(libDirPath, !incFormat.noQuotes)));
+                cmds.Add(incFormat.body.Replace("${value}", toRelativePathForCompilerArgs(libDirPath, !incFormat.noQuotes, false)));
             }
 
             return incFormat.prefix + string.Join(incFormat.sep, cmds.ToArray()) + incFormat.suffix;
@@ -1754,20 +1755,20 @@ namespace unify_builder
         static readonly string NOTE_RENDER = "\x1b[36;22m$1\x1b[0m";
         static readonly string HINT_RENDER = "\x1b[35;22m$1\x1b[0m";
 
-        static Dictionary<Regex, string> ccOutputRender = new Dictionary<Regex, string>();
-        static Dictionary<Regex, string> lkOutputRender = new Dictionary<Regex, string>();
+        static Dictionary<Regex, string> ccOutputRender = new();
+        static Dictionary<Regex, string> lkOutputRender = new();
 
-        static readonly HashSet<string> cList = new HashSet<string>();
-        static readonly HashSet<string> cppList = new HashSet<string>();
-        static readonly HashSet<string> asmList = new HashSet<string>();
-        static readonly HashSet<string> libList = new HashSet<string>();
+        static readonly HashSet<string> cList = new(512);
+        static readonly HashSet<string> cppList = new(512);
+        static readonly HashSet<string> asmList = new(512);
+        static readonly HashSet<string> libList = new(512);
 
         // compiler params for single source file, Map<absPath, params>
-        static readonly Dictionary<string, string> srcParams = new Dictionary<string, string>();
+        static readonly Dictionary<string, string> srcParams = new(512);
         static Int64 paramsMtime = 0; // source file params modify time
 
         static readonly string appBaseDir = AppDomain.CurrentDomain.SetupInformation.ApplicationBase.TrimEnd(Path.DirectorySeparatorChar);
-        static readonly Dictionary<string, string> curEnvs = new Dictionary<string, string>();
+        static readonly Dictionary<string, string> curEnvs = new(64);
 
         // Used to determine whether the received
         // return code is an error code
@@ -1867,6 +1868,9 @@ namespace unify_builder
 
             [Option("force-color", Required = false, HelpText = "force apply color render for output")]
             public bool ForceUseColor { get; set; }
+
+            [Option("rebuild", Required = false, HelpText = "force rebuild project")]
+            public bool ForceRebuild { get; set; }
         }
 
         // linux VT100 color
@@ -1973,7 +1977,7 @@ namespace unify_builder
                 {
                     try
                     {
-                        List<CommandInfo> cmds = new List<CommandInfo>();
+                        List<CommandInfo> cmds = new(16);
                         JArray jobj = JArray.Parse(
                             File.ReadAllText(cliArgs.RunCommandsJsonPath, RuntimeEncoding.instance().UTF8)
                         );
@@ -2088,10 +2092,6 @@ namespace unify_builder
                 JObject srcParamsObj = paramsObj.ContainsKey("sourceParams") ? (JObject)paramsObj["sourceParams"] : null;
                 addToSourceList(projectRoot, paramsObj["sourceList"].Values<string>(), srcParamsObj);
 
-                // to absolute paths
-                toAbsolutePaths(projectRoot, (JArray)paramsObj["incDirs"]);
-                toAbsolutePaths(projectRoot, (JArray)paramsObj["libDirs"]);
-
                 // other params
                 modeList.Add(BuilderMode.NORMAL);
                 reqThreadsNum = paramsObj.ContainsKey("threadNum") ? paramsObj["threadNum"].Value<int>() : 0;
@@ -2119,7 +2119,9 @@ namespace unify_builder
                     {
                         try
                         {
-                            modeList.Add((BuilderMode)Enum.Parse(typeof(BuilderMode), modeStr.ToUpper()));
+                            var mod = (BuilderMode)Enum.Parse(typeof(BuilderMode), modeStr.ToUpper());
+                            if (cliArgs.ForceRebuild && mod == BuilderMode.FAST) continue;
+                            modeList.Add(mod);
                         }
                         catch (Exception)
                         {
@@ -2147,11 +2149,13 @@ namespace unify_builder
                 // ignore
             }
 
-            Dictionary<string, CmdGenerator.CmdInfo> commands = new Dictionary<string, CmdGenerator.CmdInfo>();
-            Dictionary<Regex, string> tasksEnv = new Dictionary<Regex, string>();
+            Dictionary<string, CmdGenerator.CmdInfo> commands = new(512);
+
+            // task envs
+            Dictionary<string, string> taskEnvs = new(32); // format: <key: 'ENV_NAME', val: 'ENV_VALxxxx'>
 
             // compiler errlog list
-            List<string> errLogs = new List<string>();
+            List<string> errLogs = new(512);
 
             // compiler prefix
             string COMPILER_CMD_PREFIX = "";
@@ -2162,6 +2166,9 @@ namespace unify_builder
             try
             {
                 Directory.CreateDirectory(outDir);
+
+                //
+                setEnvValue("EIDE_CUR_OS_TYPE", OsInfo.instance().OsType);
 
                 // add appBase folder to system env
                 setEnvValue("PATH", appBaseDir);
@@ -2178,17 +2185,23 @@ namespace unify_builder
 
                     foreach (JProperty field in envs.Properties())
                     {
-                        string envName = field.Name.ToString();
-                        string envValue = field.Value.ToString();
+                        string envName = field.Name.ToString().Trim();
+                        string envValue = field.Value.ToString().Trim();
+
+                        if (!Regex.IsMatch(envName, @"^[\w\$]+$"))
+                        {
+                            warn(string.Format("ignore incorrect env name: '{0}'", envName));
+                            continue;
+                        }
 
                         // set to shell env
                         setEnvValue(envName, envValue);
 
                         // set to task env
-                        tasksEnv.Add(new Regex(@"\$\{" + envName + @"\}"), envValue);
+                        taskEnvs.Add("${" + envName + "}", envValue);
 
                         // set cmd prefix
-                        if (envName == "COMPILER_CMD_PREFIX" && !String.IsNullOrWhiteSpace(envValue))
+                        if (envName == "COMPILER_CMD_PREFIX" && !string.IsNullOrWhiteSpace(envValue))
                         {
                             COMPILER_CMD_PREFIX = envValue + " ";
                         }
@@ -2196,7 +2209,7 @@ namespace unify_builder
                 }
 
                 // create command generator
-                CmdGenerator cmdGen = new CmdGenerator(compilerModel, paramsObj, new CmdGenerator.GeneratorOption {
+                CmdGenerator cmdGen = new(compilerModel, paramsObj, new CmdGenerator.GeneratorOption {
                     bindirEnvName = "%TOOL_DIR%",
                     bindirAbsPath = binDir,
                     outpath = outDir,
@@ -2342,17 +2355,34 @@ namespace unify_builder
                 string ccFolder = Path.GetDirectoryName(binDir + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("c"));
                 setEnvValue("PATH", ccFolder);
 
-                // add env path for tasks
-                tasksEnv.Add(new Regex(@"\$\{TargetName\}", RegexOptions.IgnoreCase), cmdGen.getOutName());
+                // export compiler info to env
+                setEnvValue("EIDE_CUR_COMPILER_ID", cmdGen.getCompilerId().ToLower());
+                setEnvValue("EIDE_CUR_COMPILER_NAME", cmdGen.compilerName);
+                setEnvValue("EIDE_CUR_COMPILER_NAME_FULL", cmdGen.compilerFullName);
+                setEnvValue("EIDE_CUR_COMPILER_VERSION", cmdGen.compilerVersion);
 
-                tasksEnv.Add(new Regex(@"\$\{BuilderFolder\}", RegexOptions.IgnoreCase), builderDir);
-                tasksEnv.Add(new Regex(@"\$\{ToolchainRoot\}", RegexOptions.IgnoreCase), binDir);
+                // preset env vars for tasks
+                {
+                    taskEnvs.Add("${TargetName}", cmdGen.getOutName());
+                    taskEnvs.Add("${ConfigName}", cmdGen.getBuildConfigName());
+                    taskEnvs.Add("${ProjectRoot}", projectRoot);
+                    taskEnvs.Add("${BuilderFolder}", builderDir);
+                    taskEnvs.Add("${OutDir}", outDir);
 
-                tasksEnv.Add(new Regex(@"\$\{OutDir\}", RegexOptions.IgnoreCase), outDir);
-                tasksEnv.Add(new Regex(@"\$\{ProjectRoot\}", RegexOptions.IgnoreCase), projectRoot);
+                    taskEnvs.Add("${ToolchainRoot}", binDir);
+                    taskEnvs.Add("${CompilerPrefix}", cmdGen.getToolPrefix());
+                    taskEnvs.Add("${CompilerFolder}", ccFolder);
+                    taskEnvs.Add("${CompilerId}", cmdGen.getCompilerId().ToLower());
+                    taskEnvs.Add("${CompilerName}", cmdGen.compilerName);
+                    taskEnvs.Add("${CompilerFullName}", cmdGen.compilerFullName);
+                    taskEnvs.Add("${CompilerVersion}", cmdGen.compilerVersion);
 
-                tasksEnv.Add(new Regex(@"\$\{CompilerPrefix\}", RegexOptions.IgnoreCase), cmdGen.getToolPrefix());
-                tasksEnv.Add(new Regex(@"\$\{CompilerFolder\}", RegexOptions.IgnoreCase), ccFolder);
+                    taskEnvs.Add("${re:ProjectRoot}", ".");
+                    taskEnvs.Add("${re:BuilderFolder}", Utility.toRelativePath(projectRoot, builderDir) ?? builderDir);
+                    taskEnvs.Add("${re:OutDir}", Utility.toRelativePath(projectRoot, outDir) ?? outDir);
+                    taskEnvs.Add("${re:ToolchainRoot}", Utility.toRelativePath(projectRoot, binDir) ?? binDir);
+                    taskEnvs.Add("${re:CompilerFolder}", Utility.toRelativePath(projectRoot, ccFolder) ?? ccFolder);
+                }
 
                 if (checkMode(BuilderMode.DEBUG))
                 {
@@ -2456,7 +2486,7 @@ namespace unify_builder
                 switchWorkDir(projectRoot);
 
                 // run tasks before build
-                if (runTasks("RUN TASKS BEFORE BUILD", "beforeBuildTasks", tasksEnv) != CODE_DONE)
+                if (runTasks("RUN TASKS BEFORE BUILD", "beforeBuildTasks", taskEnvs) != CODE_DONE)
                 {
                     throw new Exception("Run Tasks Failed !, Stop Build !");
                 }
@@ -2929,7 +2959,7 @@ namespace unify_builder
             try
             {
                 switchWorkDir(projectRoot);
-                runTasks("RUN TASKS AFTER BUILD", "afterBuildTasks", tasksEnv);
+                runTasks("RUN TASKS AFTER BUILD", "afterBuildTasks", taskEnvs);
                 resetWorkDir();
             }
             catch (Exception err)
@@ -2942,6 +2972,57 @@ namespace unify_builder
 
             return CODE_DONE;
         }
+
+        /*static string[] parseCommandLineArgs(string cliStr)
+        {
+            var argsLi = new List<string>(32);
+
+            bool inQuote = false;
+            string curArg = string.Empty;
+
+            foreach (var char_ in cliStr)
+            {
+                if (char_ == '"' && (curArg.Length == 0 || curArg[^1] != '\\')) // is a "..." start or end
+                {
+                    if (inQuote)
+                    {
+                        inQuote = false;
+                        if (!string.IsNullOrWhiteSpace(curArg)) argsLi.Add(curArg);
+                        curArg = string.Empty;
+                    }
+                    else
+                    {
+                        inQuote = true;
+                    }
+
+                    continue; // skip '"'
+                }
+
+                if (inQuote) // in "..." region
+                {
+                    curArg += char_;
+                }
+                else // out "..." region
+                {
+                    if (char.IsWhiteSpace(char_))
+                    {
+                        if (!string.IsNullOrWhiteSpace(curArg)) argsLi.Add(curArg);
+                        curArg = string.Empty;
+                    }
+                    else
+                    {
+                        curArg += char_;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(curArg))
+            {
+                argsLi.Add(curArg);
+            }
+
+            return argsLi.ToArray();
+        }*/
 
         static void parseMapFileForIarStm8(string mapFileFullPath,
             out int ramSize, out int romSize, out string maplog)
@@ -2957,7 +3038,7 @@ namespace unify_builder
             //   136 bytes of readonly  data memory
             //   774 bytes of readwrite data memory
 
-            List<string> strLi = new List<string>();
+            List<string> strLi = new(64);
 
             int ro_code_size = -1;
             int ro_data_size = -1;
@@ -3055,7 +3136,7 @@ namespace unify_builder
                 return;
             }
 
-            Dictionary<string, SdccMapSectionDef> secList = new Dictionary<string, SdccMapSectionDef>();
+            Dictionary<string, SdccMapSectionDef> secList = new(32);
 
             //
             // example line:
@@ -3145,7 +3226,7 @@ namespace unify_builder
                 }
             }
 
-            List<List<object>> tableData = new List<List<object>>();
+            List<List<object>> tableData = new(64);
 
             foreach (var item in secList.Values)
             {
@@ -3536,7 +3617,7 @@ namespace unify_builder
                 encoding = RuntimeEncoding.instance().Default;
             }
 
-            Process process = new Process();
+            Process process = new();
             process.StartInfo.FileName = replaceEnvVariable(filename);
             process.StartInfo.Arguments = replaceEnvVariable(args);
             process.StartInfo.UseShellExecute = false;
@@ -3552,27 +3633,27 @@ namespace unify_builder
             StringBuilder stdErr = new();
 
             process.OutputDataReceived += delegate (object sender, DataReceivedEventArgs e) {
-                if (!string.IsNullOrWhiteSpace(e.Data))
-                {
-                    stdOut.AppendLine(e.Data);
 
-                    lock (output)
-                    {
-                        output.AppendLine(e.Data);
-                    }
+                if (e.Data == null) return;
+
+                stdOut.AppendLine(e.Data);
+
+                lock (output)
+                {
+                    output.AppendLine(e.Data);
                 }
             };
 
             process.ErrorDataReceived += delegate (object sender, DataReceivedEventArgs e) {
-                if (!string.IsNullOrWhiteSpace(e.Data))
-                {
-                    lock (output)
-                    {
-                        output.AppendLine(e.Data);
-                    }
 
-                    stdErr.AppendLine(e.Data);
+                if (e.Data == null) return;
+
+                lock (output)
+                {
+                    output.AppendLine(e.Data);
                 }
+
+                stdErr.AppendLine(e.Data);
             };
 
             process.BeginOutputReadLine();
@@ -3816,7 +3897,7 @@ namespace unify_builder
             return new string(buf);
         }
 
-        static int runTasks(string label, string fieldName, Dictionary<Regex, string> envList)
+        static int runTasks(string label, string fieldName, Dictionary<string, string> envKvMap)
         {
             JObject options = (JObject)paramsObj[CmdGenerator.optionKey];
 
@@ -3889,11 +3970,16 @@ namespace unify_builder
                             throw new Exception("task command line can't be null !");
                         }
 
-                        string command = cmd["command"].Value<string>();
+                        string command = cmd["command"].Value<string>().Trim();
 
                         // replace env path
-                        foreach (var item in envList)
-                            command = item.Key.Replace(command, item.Value);
+                        foreach (var kv in envKvMap)
+                        {
+                            var pattern = kv.Key
+                                .Replace("$", "\\$")
+                                .Replace("{", "\\{").Replace("}", "\\}");
+                            command = Regex.Replace(command, pattern, kv.Value, RegexOptions.IgnoreCase);
+                        }
 
                         // run command
                         if (runShellCommand(command, out string cmdStdout) == CODE_DONE)
@@ -3948,11 +4034,11 @@ namespace unify_builder
             public CheckDiffRes()
             {
                 cCount = cppCount = asmCount = 0;
-                totalCmds = new Dictionary<string, CmdGenerator.CmdInfo>();
+                totalCmds = new(512);
             }
         }
 
-        static Dictionary<string, bool> diffCache = new Dictionary<string, bool>();
+        static Dictionary<string, bool> diffCache = new(512);
 
         static readonly DateTime utcBaseTime = TimeZoneInfo.ConvertTimeFromUtc(new System.DateTime(1970, 1, 1), TimeZoneInfo.Local);
         static CheckDiffRes checkDiff(string modelID, Dictionary<string, CmdGenerator.CmdInfo> commands)
