@@ -304,7 +304,9 @@ namespace unify_builder
 
         private readonly Dictionary<string, Encoding> encodings = new(8);
 
-        private readonly Dictionary<string, string[]> cmdLists = new(512);
+        private readonly Dictionary<string, string[]> baseOpts = new(512); // base compiler options
+        private readonly Dictionary<string, string[]> userOpts = new(512); // user compiler options
+
         private readonly Dictionary<string, JObject> paramObj = new(8);
         private readonly Dictionary<string, JObject> models = new(8);
 
@@ -618,46 +620,51 @@ namespace unify_builder
             // set outName to unique
             getUniqueName(getOutName());
 
-            // set stable command line
+            // set stable compiler options
             foreach (var model in models)
             {
                 string name = model.Key;
                 JObject cmpModel = model.Value;
-                List<string> commandList = new(256);
 
                 JObject[] cmpParams = {
                     globalParams,
                     paramObj[name]
                 };
 
+                var baseOptLi = new List<string>(64);
+                var userOptLi = new List<string>(64);
+
+                // set default options
                 if (cmpModel.ContainsKey("$default"))
                 {
                     foreach (var ele in ((JArray)cmpModel["$default"]).Values<string>())
-                        commandList.Add(ele);
+                        baseOptLi.Add(ele);
                 }
 
+                // merge user compiler options
                 foreach (var ele in cmpModel)
                 {
+                    // skip built-in args
+                    if (ele.Key[0] == '$')
+                        continue;
+
                     try
                     {
-                        if (ele.Key[0] != '$') // ignore optional commands
+                        object paramsValue = mergeParamsList(cmpParams, ele.Key, ele.Value["type"].Value<string>());
+
+                        try
                         {
-                            object paramsValue = mergeParamsList(cmpParams, ele.Key, ele.Value["type"].Value<string>());
+                            string cmd = getCommandValue((JObject)ele.Value, paramsValue).Trim();
 
-                            try
+                            if (!string.IsNullOrEmpty(cmd))
                             {
-                                string cmd = getCommandValue((JObject)ele.Value, paramsValue).Trim();
-
-                                if (!string.IsNullOrEmpty(cmd))
-                                {
-                                    commandList.Add(cmd);
-                                }
+                                userOptLi.Add(cmd);
                             }
-                            catch (TypeErrorException err)
-                            {
-                                throw new TypeErrorException("The type of key '" + ele.Key + "' is '" + err.Message
-                                    + "' but you gived '" + paramsValue.GetType().Name + "'");
-                            }
+                        }
+                        catch (TypeErrorException err)
+                        {
+                            throw new TypeErrorException("The type of key '" + ele.Key + "' is '" + err.Message
+                                + "' but you gived '" + paramsValue.GetType().Name + "'");
                         }
                     }
                     catch (TypeErrorException err)
@@ -670,67 +677,41 @@ namespace unify_builder
                     }
                 }
 
-                // set lib search folders
-                if (name == "linker")
+                // set include path and defines for c/c++/asm compiler
+                if (name != "linker")
+                {
+                    // include list
+                    var incOpts = getIncludesCmdLine(name, ((JArray)cParams["incDirs"]).Values<string>());
+                    if (!string.IsNullOrEmpty(incOpts)) baseOptLi.Add(incOpts);
+
+                    // macro list
+                    var defOpts = getdefinesCmdLine(name, ((JArray)cParams["defines"]).Values<string>());
+                    if (!string.IsNullOrEmpty(defOpts)) userOptLi.Add(defOpts);
+                }
+
+                // set lib search folders for linker
+                else
                 {
                     string command = getLibSearchFolders(name, ((JArray)cParams["libDirs"]).Values<string>());
+
                     if (!string.IsNullOrEmpty(command))
                     {
-                        commandList.Add(command);
-                    }
-                }
-                else // set include path and defines
-                {
-                    string[] additionList = new string[] {
-                        getIncludesCmdLine(name, ((JArray)cParams["incDirs"]).Values<string>()),
-                        getdefinesCmdLine(name, ((JArray)cParams["defines"]).Values<string>())
-                    };
-
-                    foreach (string command in additionList)
-                    {
-                        if (!string.IsNullOrEmpty(command))
-                        {
-                            commandList.Add(command);
-                        }
+                        baseOptLi.Add(command);
                     }
                 }
 
                 if (cmpModel.ContainsKey("$default-tail"))
                 {
                     foreach (var ele in ((JArray)cmpModel["$default-tail"]).Values<string>())
-                        commandList.Add(ele);
+                        baseOptLi.Add(ele);
                 }
 
-                // replace ${var} to value
-                Regex matcher = new Regex(@"\$\{([^\}]+)\}", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-                for (int i = 0; i < commandList.Count; i++)
-                {
-                    Match mList = matcher.Match(commandList[i]);
-                    if (mList.Success && mList.Groups.Count > 1)
-                    {
-                        for (int mIndex = 1; mIndex < mList.Groups.Count; mIndex++)
-                        {
-                            string key = mList.Groups[mIndex].Value;
+                // format ${var} variables in string
+                formatVarInCompilerOptions(cmpModel, baseOptLi, cmpParams);
+                formatVarInCompilerOptions(cmpModel, userOptLi, cmpParams);
 
-                            if (cmpModel.ContainsKey(key))
-                            {
-                                try
-                                {
-                                    JObject field = (JObject)cmpModel[key];
-                                    object paramsVal = mergeParamsList(cmpParams, key, field["type"].Value<string>());
-                                    string cmdStr = getCommandValue(field, paramsVal);
-                                    commandList[i] = commandList[i].Replace("${" + key + "}", cmdStr);
-                                }
-                                catch (Exception)
-                                {
-                                    // ignore log
-                                }
-                            }
-                        }
-                    }
-                }
-
-                cmdLists.Add(name, commandList.ToArray());
+                baseOpts.Add(name, baseOptLi.ToArray());
+                userOpts.Add(name, userOptLi.ToArray());
             }
         }
 
@@ -749,6 +730,38 @@ namespace unify_builder
         public CmdInfo fromCppFile(string fpath, bool onlyCmd = false)
         {
             return fromModel("cpp", "language-cpp", fpath, onlyCmd);
+        }
+
+        private void formatVarInCompilerOptions(JObject model, List<string> opts, JObject[] userParams)
+        {
+            var matcher = new Regex(@"\$\{([^\}]+)\}", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+            for (int i = 0; i < opts.Count; i++)
+            {
+                Match mList = matcher.Match(opts[i]);
+
+                if (mList.Success && mList.Groups.Count > 1)
+                {
+                    for (int mIndex = 1; mIndex < mList.Groups.Count; mIndex++)
+                    {
+                        string key = mList.Groups[mIndex].Value;
+
+                        if (!model.ContainsKey(key)) continue;
+
+                        try
+                        {
+                            JObject field = (JObject)model[key];
+                            object paramsVal = mergeParamsList(userParams, key, field["type"].Value<string>());
+                            string cmdStr = getCommandValue(field, paramsVal);
+                            opts[i] = opts[i].Replace("${" + key + "}", cmdStr);
+                        }
+                        catch (Exception)
+                        {
+                            // ignore log
+                        }
+                    }
+                }
+            }
         }
 
         private bool isArmGnuAsmFile(string fpath)
@@ -938,7 +951,7 @@ namespace unify_builder
             string outName = outDir + Path.DirectorySeparatorChar + outFileName;
             string outPath = outName + outSuffix;
             string mapPath = outName + mapSuffix;
-            string stableCommand = string.Join(" ", cmdLists["linker"]);
+            string stableCommand = string.Join(" ", baseOpts["linker"].Concat(userOpts["linker"]));
             string cmdLine = compilerAttr_commandPrefix;
 
             if (cmdLocation == "start")
@@ -1252,6 +1265,9 @@ namespace unify_builder
             return result;
         }
 
+        private readonly Regex compilerOpts_overrideExprMatcher = new(@"\$<override:(.+?)>", RegexOptions.Compiled);
+        private readonly Regex compilerOpts_replaceExprMatcher = new(@"\$<replace:(?<old>.+?)/(?<new>.+?)>", RegexOptions.Compiled);
+
         private CmdInfo fromModel(string modelName, string langName, string fpath, bool onlyCmd = false)
         {
             JObject cModel = models[modelName];
@@ -1345,12 +1361,67 @@ namespace unify_builder
                     .Replace("${listPath}", toRelativePathForCompilerArgs(listPath, isQuote)));
             }
 
-            List<string> compiler_cmds = new(cmdLists[modelName]);
+            List<string> compiler_cmds = new(baseOpts[modelName]);
 
-            // add independent commands for source
-            if (srcParams.ContainsKey(fpath))
+            // set independent options for source file
+            if (srcParams.ContainsKey(fpath) && !string.IsNullOrWhiteSpace(srcParams[fpath]))
             {
-                compiler_cmds.Add(srcParams[fpath]);
+                var srcOpts = srcParams[fpath].Trim();
+
+                //
+                // !!! this block must at the first !!!
+                //
+                // override expr:
+                //      override global user options if we need;
+                //      otherwise, concat user options and source options
+                {
+                    var mRes = compilerOpts_overrideExprMatcher.Match(srcOpts);
+
+                    if (mRes.Success && mRes.Groups.Count > 1)
+                    {
+                        srcOpts = mRes.Groups[1].Value.Trim();
+                    }
+                    else
+                    {
+                        compiler_cmds.AddRange(userOpts[modelName]);
+                    }
+                }
+
+                // replace expr:
+                //      replace some matched options to other
+                {
+                    var mRes = compilerOpts_replaceExprMatcher.Match(srcOpts);
+                    if (mRes.Success && mRes.Groups.Count > 2)
+                    {
+                        var oldVal = mRes.Groups["old"].Value.Trim();
+                        var newVal = mRes.Groups["new"].Value.Trim();
+
+                        // del expr-self
+                        srcOpts = srcOpts.Remove(mRes.Groups[0].Index, mRes.Groups[0].Length);
+
+                        if (!string.IsNullOrEmpty(oldVal))
+                        {
+                            for (int i = 0; i < compiler_cmds.Count; i++)
+                            {
+                                compiler_cmds[i] = compiler_cmds[i].Replace(oldVal, newVal);
+                            }
+                        }
+                    }
+                }
+
+                //
+                // add to compiler options
+                //
+                if (!string.IsNullOrEmpty(srcOpts))
+                {
+                    compiler_cmds.Add(srcOpts);
+                }
+            }
+
+            // add user global options if not have source independent options
+            else
+            {
+                compiler_cmds.AddRange(userOpts[modelName]);
             }
 
             // replace variables

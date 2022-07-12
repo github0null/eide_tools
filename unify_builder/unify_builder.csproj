@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -9,10 +9,8 @@
     <Description>unify code builder for embedded ide</Description>
     <Copyright>Copyright @ em-ide.com 2022 all right reserved</Copyright>
     <Company>em-ide.com</Company>
-    <AssemblyVersion>3.0.4.0</AssemblyVersion>
-    <FileVersion>2.0.0.0</FileVersion>
     <ErrorReport>none</ErrorReport>
-    <Version>3.4.1</Version>
+    <Version>3.4.2</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
