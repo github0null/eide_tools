@@ -146,8 +146,10 @@ namespace sdcc_asm_optimizer
                     // parse asm source
                     StringWriter pStdOut = new(), pStdErr = new();
                     SourceContext parserCtx = ParseSourceFile(fOutPath, pStdOut, pStdErr);
-                    if (cliOptions.OnlyTestSourceFile) continue; // if it's test mode, ignore split
                     if (pStdErr.GetStringBuilder().Length != 0) throw new Exception("Parser Error: " + pStdErr.ToString());
+
+                    // if it's test mode, ignore split
+                    if (cliOptions.OnlyTestSourceFile) continue;
 
                     // split modules
                     string[] outFiles = Array.Empty<string>();
@@ -830,8 +832,9 @@ namespace sdcc_asm_optimizer
 
                 foreach (var refName in curSym.refs)
                 {
+                    // skip direct recursive
                     if (curSym.name == refName)
-                        continue; // skip loop self ref
+                        continue;
 
                     refSyms.AddRange(FindSymbols(refName));
                 }
@@ -842,17 +845,26 @@ namespace sdcc_asm_optimizer
                 {
                     var s = symStk.Pop();
 
+                    // skip indirect recursive
+                    if (curSym.name == s.name)
+                        continue;
+
                     // if it's global sym, ignore it
                     // we only need to handle static reference
                     if (s.isStatic == false)
+                        continue;
+
+                    // skip existed syms (indirect recursive)
+                    if (curRefs.Contains(s))
                         continue;
 
                     curRefs.Add(s);
 
                     foreach (var n in s.refs)
                     {
+                        // skip direct recursive
                         if (s.name == n)
-                            continue; // skip loop self ref
+                            continue;
 
                         foreach (var item in FindSymbols(n))
                         {
