@@ -2600,7 +2600,7 @@ namespace unify_builder
                     // it's a splitted obj, parse from file
                     else if (File.Exists(ccArgs.outPath))
                     {
-                        var objLi = parseSourceSplitterOutput(File.ReadAllLines(ccArgs.outPath))
+                        var objLi = parseSourceSplitterOutput(File.ReadLines(ccArgs.outPath))
                             .Select(path => {
                                 return Utility.isAbsolutePath(path) ? path : (projectRoot + Path.DirectorySeparatorChar + path);
                             }).ToList();
@@ -3372,7 +3372,7 @@ namespace unify_builder
                 return new Regex(reg, RegexOptions.IgnoreCase | RegexOptions.Compiled);
             }).ToArray();
 
-            foreach (string line in File.ReadAllLines(mapFileFullPath))
+            foreach (string line in File.ReadLines(mapFileFullPath))
             {
                 if (Array.FindIndex(regList, (Regex reg) => { return reg.IsMatch(line); }) != -1)
                 {
