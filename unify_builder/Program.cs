@@ -65,7 +65,7 @@ namespace unify_builder
             return res.ToArray();
         }
 
-        public static T getJsonVal<T>(JObject jobj, string key, T defVal = null) where T : class
+        public static T getJsonVal<T>(JObject jobj, string key, T defVal)
         {
             if (!jobj.ContainsKey(key)) return defVal;
             return jobj[key].Value<T>();
