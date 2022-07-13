@@ -65,6 +65,18 @@ namespace unify_builder
             return res.ToArray();
         }
 
+        public static T getJsonVal<T>(JObject jobj, string key, T defVal = null) where T : class
+        {
+            if (!jobj.ContainsKey(key)) return defVal;
+            return jobj[key].Value<T>();
+        }
+
+        public static T[] getJsonArray<T>(JObject jobj, string key, T[] defVal = null) where T : class
+        {
+            if (!jobj.ContainsKey(key)) return defVal;
+            return jobj[key].Values<T>().ToArray();
+        }
+
         public static string toUnixPath(string path)
         {
             return path.Replace('\\', '/');
@@ -375,8 +387,8 @@ namespace unify_builder
 
             var GetRealToolName = delegate (Dictionary<string, JObject> userParamsObj, string modName) {
                 if (!userParamsObj[modName].ContainsKey("$use")) return modName;
-                var name = userParamsObj[modName]["$use"].Value<string>().Replace(modName + '-', "");
-                if (string.IsNullOrWhiteSpace(name)) return modName;
+                var name = userParamsObj[modName]["$use"].Value<string>();
+                if (string.IsNullOrWhiteSpace(name) || name.StartsWith(modName + "-") || name == modName) return name;
                 return modName + '-' + name;
             };
 
