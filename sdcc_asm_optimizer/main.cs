@@ -1194,11 +1194,11 @@ namespace sdcc_asm_optimizer
             }
         }
 
-        public override void EnterMemoryAlloc([NotNull] SdAsmParser.MemoryAllocContext context)
+        public override void ExitMemoryAlloc([NotNull] SdAsmParser.MemoryAllocContext context)
         {
             if (AsmSrcContext.IsActived &&
-                context.GetChild(0) is ITerminalNode n &&
-                n.Symbol.Type == SdAsmParser.Identifier)
+                context.children[2] is SdAsmParser.MemoryDataContext mDatCtx &&
+                mDatCtx.children[0] is ITerminalNode n && n.Symbol.Type == SdAsmParser.Identifier)
             {
                 if (AsmSrcContext.label.StartsWith("__xinit_"))
                 {
