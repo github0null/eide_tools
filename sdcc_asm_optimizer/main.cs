@@ -1196,27 +1196,31 @@ namespace sdcc_asm_optimizer
 
         public override void ExitMemoryAlloc([NotNull] SdAsmParser.MemoryAllocContext context)
         {
-            if (AsmSrcContext.IsActived &&
-                context.children[2] is SdAsmParser.MemoryDataContext mDatCtx &&
-                mDatCtx.children[0] is ITerminalNode n && n.Symbol.Type == SdAsmParser.Identifier)
+            if (AsmSrcContext.IsActived)
             {
-                if (AsmSrcContext.label.StartsWith("__xinit_"))
+                foreach (var mDatCtx in context.memoryData())
                 {
-                    var valName = AsmSrcContext.label.Replace("__xinit_", "");
-                    var idx = AsmSrcContext.symbols.FindIndex(s => s.name == valName);
+                    if (!(mDatCtx.children[0] is ITerminalNode n && n.Symbol.Type == SdAsmParser.Identifier))
+                        continue; // skip normal memory alloc expr
 
-                    if (idx != -1)
+                    if (AsmSrcContext.label.StartsWith("__xinit_"))
                     {
-                        AsmSrcContext.symbols[idx].refs.Add(n.GetText());
+                        var valName = AsmSrcContext.label.Replace("__xinit_", "");
+                        var idx = AsmSrcContext.symbols.FindIndex(s => s.name == valName);
+
+                        if (idx != -1)
+                        {
+                            AsmSrcContext.symbols[idx].refs.Add(n.GetText());
+                        }
+                        else
+                        {
+                            throw new Exception(string.Format("Not found var define for '{0}'", AsmSrcContext.label));
+                        }
                     }
                     else
                     {
-                        throw new Exception(string.Format("Not found var define for '{0}'", AsmSrcContext.label));
+                        AsmSrcContext.refs.Add(n.GetText());
                     }
-                }
-                else
-                {
-                    AsmSrcContext.refs.Add(n.GetText());
                 }
             }
         }
