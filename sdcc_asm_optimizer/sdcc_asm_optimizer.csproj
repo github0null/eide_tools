@@ -7,7 +7,7 @@
     <Nullable>disable</Nullable>
     <PlatformTarget>x64</PlatformTarget>
     <Authors>github0null.io</Authors>
-    <Version>1.0.2</Version>
+    <Version>1.0.3</Version>
     <ErrorReport>none</ErrorReport>
   </PropertyGroup>
 

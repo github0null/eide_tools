@@ -28,7 +28,7 @@ directive
     ;
 
 moduleName
-    : Identifier
+    : (Identifier | Number | '-' | '#' | '@')+
     ;
 
 sdccOpts
@@ -59,6 +59,7 @@ memoryData
     : Number '$'? 
     | StringLiteral
     | '#'? '(' expr ')'
+    | Identifier
     ;
 
 ifStatement
@@ -92,8 +93,7 @@ expressions
 expr
     : expr operator expr
     | ('+' | '-' | '~' | unaryOperator) operand
-    | operand '.' Number
-    | operand
+    | operand ('.' Number)?
     | ('#' unaryOperator? | unaryOperator | Number)? '(' expressions+ ')'
     ;
 

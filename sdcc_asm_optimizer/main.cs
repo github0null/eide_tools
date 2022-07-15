@@ -1189,6 +1189,33 @@ namespace sdcc_asm_optimizer
             }
         }
 
+        public override void EnterMemoryAlloc([NotNull] SdAsmParser.MemoryAllocContext context)
+        {
+            if (AsmSrcContext.IsActived &&
+                context.GetChild(0) is ITerminalNode n &&
+                n.Symbol.Type == SdAsmParser.Identifier)
+            {
+                if (AsmSrcContext.label.StartsWith("__xinit_"))
+                {
+                    var valName = AsmSrcContext.label.Replace("__xinit_", "");
+                    var idx = AsmSrcContext.symbols.FindIndex(s => s.name == valName);
+
+                    if (idx != -1)
+                    {
+                        AsmSrcContext.symbols[idx].refs.Add(n.GetText());
+                    }
+                    else
+                    {
+                        throw new Exception(string.Format("Not found var define for '{0}'", AsmSrcContext.label));
+                    }
+                }
+                else
+                {
+                    AsmSrcContext.refs.Add(n.GetText());
+                }
+            }
+        }
+
         // error handler
 
         public void SyntaxError(TextWriter output, IRecognizer recognizer, int offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
