@@ -595,8 +595,10 @@ namespace sdcc_asm_optimizer
             parser.BuildParseTree = true;
             parser.Profile = ENABLE_PROFILE;
 
+            var timeStart = DateTime.Now;
             var ctx = parser.asmFile();
             if (ctx.exception != null) throw ctx.exception;
+            var timeUsage = DateTime.Now.Subtract(timeStart);
 
             if (ENABLE_PROFILE)
             {
@@ -628,6 +630,9 @@ namespace sdcc_asm_optimizer
                         print(string.Format("{0,-" + 15 + "}", decisionInfo.errors.Count), true);
                     }
                 }
+
+                print("---", true);
+                print(string.Format("parser elapsed time: {0} ms", timeUsage.TotalMilliseconds), true);
             }
 
             return cListener.SourceContext;
@@ -1098,7 +1103,7 @@ namespace sdcc_asm_optimizer
                 switch (n.GetText())
                 {
                     case "module":
-                        AsmSrcContext.module = context.moduleName().GetText();
+                        AsmSrcContext.module = GetFullTextByCtx(context.moduleName());
                         AsmSrcContext.moduleHeaderLine = context.Start.Line - 1;
                         break;
                     case "optsdcc":
