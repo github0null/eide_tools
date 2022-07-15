@@ -375,16 +375,6 @@ namespace unify_builder
             paramObj.Add("asm", compileOptions.ContainsKey("asm-compiler") ? (JObject)compileOptions["asm-compiler"] : new JObject());
             paramObj.Add("linker", compileOptions.ContainsKey("linker") ? (JObject)compileOptions["linker"] : new JObject());
 
-            // init params for other spec compiler
-
-            if (toolId == "SDCC")
-            {
-                if (paramObj["global"].ContainsKey("$one-module-per-function"))
-                {
-                    compilerAttr_sdcc_module_split = paramObj["global"]["$one-module-per-function"].Value<bool>();
-                }
-            }
-
             var GetRealToolName = delegate (Dictionary<string, JObject> userParamsObj, string modName) {
                 if (!userParamsObj[modName].ContainsKey("$use")) return modName;
                 var name = userParamsObj[modName]["$use"].Value<string>();
@@ -515,64 +505,86 @@ namespace unify_builder
             }
 
             // try to get compiler fullname and version
-
-            // init default value
-            compilerName = getModelName();
-            compilerVersion = null;
-            compilerFullName = compilerName;
-
-            // parse from compiler
-            try
             {
-                string exePath = option.bindirAbsPath + Path.DirectorySeparatorChar + getActivedRawToolPath("c");
-                JObject vMatcher = this.getToolchainVersionMatcher();
+                // init default value
+                compilerName = getModelName();
+                compilerVersion = string.Empty;
+                compilerFullName = compilerName;
 
-                if (vMatcher != null)
+                // parse from compiler
+                try
                 {
-                    var matcher = new Regex(vMatcher["matcher"].Value<string>(), RegexOptions.IgnoreCase);
-                    int eCode = Program.runExe(exePath, vMatcher["args"].Value<string>(), out string output);
+                    string exePath = option.bindirAbsPath + Path.DirectorySeparatorChar + getActivedRawToolPath("c");
+                    JObject vMatcher = this.getToolchainVersionMatcher();
 
-                    // ignore exit code for keil_c51 compiler
-                    if (this.getCompilerId() == "KEIL_C51") eCode = Program.CODE_DONE;
-
-                    if (eCode == Program.CODE_DONE && !String.IsNullOrWhiteSpace(output))
+                    if (vMatcher != null)
                     {
-                        string[] lines = Program.CRLFMatcher.Split(output);
+                        var matcher = new Regex(vMatcher["matcher"].Value<string>(), RegexOptions.IgnoreCase);
+                        int eCode = Program.runExe(exePath, vMatcher["args"].Value<string>(), out string output);
 
-                        foreach (var line in lines)
+                        // ignore exit code for keil_c51 compiler
+                        if (this.getCompilerId() == "KEIL_C51") eCode = Program.CODE_DONE;
+
+                        if (eCode == Program.CODE_DONE && !String.IsNullOrWhiteSpace(output))
                         {
-                            var res = matcher.Match(line);
+                            string[] lines = Program.CRLFMatcher.Split(output);
 
-                            if (res.Success && res.Groups.Count > 0)
+                            foreach (var line in lines)
                             {
-                                if (res.Groups["name"] != null)
+                                var res = matcher.Match(line);
+
+                                if (res.Success && res.Groups.Count > 0)
                                 {
-                                    compilerName = res.Groups["name"].Value;
+                                    if (res.Groups["name"] != null)
+                                    {
+                                        compilerName = res.Groups["name"].Value;
+                                    }
+
+                                    if (res.Groups["version"] != null)
+                                    {
+                                        compilerVersion = res.Groups["version"].Value;
+                                    }
+
+                                    // full name is the full matched txt
+                                    compilerFullName = line.Trim();
+
+                                    break; // found it, exit
                                 }
-
-                                if (res.Groups["version"] != null)
-                                {
-                                    compilerVersion = res.Groups["version"].Value;
-                                }
-
-                                // full name is the full matched txt
-                                compilerFullName = line.Trim();
-
-                                break; // found it, exit
                             }
                         }
                     }
                 }
-            }
-            catch (Exception)
-            {
-                // nothing todo
+                catch (Exception)
+                {
+                    // nothing todo
+                }
+
+                // if compiler name is empty, use default name
+                if (string.IsNullOrWhiteSpace(compilerName))
+                {
+                    compilerName = getModelName();
+                }
             }
 
-            // if compiler name is empty, use default name
-            if (string.IsNullOrWhiteSpace(compilerName))
+            // init params for other spec compiler
             {
-                compilerName = getModelName();
+                if (toolId == "SDCC")
+                {
+                    if (paramObj["global"].ContainsKey("$one-module-per-function"))
+                    {
+                        compilerAttr_sdcc_module_split = paramObj["global"]["$one-module-per-function"].Value<bool>();
+                    }
+
+                    // check sdcc version, must > v4.x.x
+                    if (compilerAttr_sdcc_module_split && !string.IsNullOrEmpty(compilerVersion))
+                    {
+                        if (!Regex.IsMatch(compilerVersion, @"^([4-9]|[1-9]\d+)\."))
+                        {
+                            var msg = string.Format("In module split mode, sdcc version must >= 'v4.x.x', now is '{0}' !", compilerVersion);
+                            throw new Exception(msg);
+                        }
+                    }
+                }
             }
 
             // set encodings
