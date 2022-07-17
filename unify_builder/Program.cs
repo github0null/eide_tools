@@ -665,6 +665,28 @@ namespace unify_builder
                         baseOptLi.Add(ele);
                 }
 
+                // set include path and defines for c/c++/asm compiler
+                if (name != "linker")
+                {
+                    // include list
+                    var incOpts = getIncludesCmdLine(name, ((JArray)cParams["incDirs"]).Values<string>());
+                    if (!string.IsNullOrEmpty(incOpts)) baseOptLi.Add(incOpts);
+
+                    // macro list
+                    var defOpts = getdefinesCmdLine(name, ((JArray)cParams["defines"]).Values<string>());
+                    if (!string.IsNullOrEmpty(defOpts)) userOptLi.Add(defOpts);
+                }
+                // set lib search folders for linker
+                else
+                {
+                    string command = getLibSearchFolders(name, ((JArray)cParams["libDirs"]).Values<string>());
+
+                    if (!string.IsNullOrEmpty(command))
+                    {
+                        baseOptLi.Add(command);
+                    }
+                }
+
                 // merge user compiler options
                 foreach (var ele in cmpModel)
                 {
@@ -698,29 +720,6 @@ namespace unify_builder
                     catch (Exception err)
                     {
                         throw new Exception("Init command failed: '" + name + "', Key: '" + ele.Key + "' !, " + err.Message);
-                    }
-                }
-
-                // set include path and defines for c/c++/asm compiler
-                if (name != "linker")
-                {
-                    // include list
-                    var incOpts = getIncludesCmdLine(name, ((JArray)cParams["incDirs"]).Values<string>());
-                    if (!string.IsNullOrEmpty(incOpts)) baseOptLi.Add(incOpts);
-
-                    // macro list
-                    var defOpts = getdefinesCmdLine(name, ((JArray)cParams["defines"]).Values<string>());
-                    if (!string.IsNullOrEmpty(defOpts)) userOptLi.Add(defOpts);
-                }
-
-                // set lib search folders for linker
-                else
-                {
-                    string command = getLibSearchFolders(name, ((JArray)cParams["libDirs"]).Values<string>());
-
-                    if (!string.IsNullOrEmpty(command))
-                    {
-                        baseOptLi.Add(command);
                     }
                 }
 
