@@ -1288,7 +1288,7 @@ namespace unify_builder
             return result;
         }
 
-        private readonly Regex compilerOpts_overrideExprMatcher = new(@"\$<override:(.+?)>", RegexOptions.Compiled);
+        private readonly Regex compilerOpts_overrideExprMatcher = new(@"\$<override:(.+)>", RegexOptions.Compiled);
         private readonly Regex compilerOpts_replaceExprMatcher = new(@"\$<replace:(?<old>.+?)/(?<new>.+?)>", RegexOptions.Compiled);
 
         private CmdInfo fromModel(string modelName, string langName, string fpath, bool onlyCmd = false)
