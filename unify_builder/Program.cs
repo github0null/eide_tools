@@ -656,7 +656,7 @@ namespace unify_builder
                 };
 
                 var baseOptLi = new List<string>(64);
-                var userOptLi = new List<string>(64);
+                var userOptLi = new List<string>(256);
 
                 // set default options
                 if (cmpModel.ContainsKey("$default"))
@@ -670,7 +670,7 @@ namespace unify_builder
                 {
                     // include list
                     var incOpts = getIncludesCmdLine(name, ((JArray)cParams["incDirs"]).Values<string>());
-                    if (!string.IsNullOrEmpty(incOpts)) baseOptLi.Add(incOpts);
+                    if (!string.IsNullOrEmpty(incOpts)) userOptLi.Add(incOpts);
 
                     // macro list
                     var defOpts = getdefinesCmdLine(name, ((JArray)cParams["defines"]).Values<string>());
@@ -691,26 +691,17 @@ namespace unify_builder
                 foreach (var ele in cmpModel)
                 {
                     // skip built-in args
-                    if (ele.Key[0] == '$')
-                        continue;
+                    if (ele.Key[0] == '$') continue;
 
                     try
                     {
                         object paramsValue = mergeParamsList(cmpParams, ele.Key, ele.Value["type"].Value<string>());
 
-                        try
-                        {
-                            string cmd = getCommandValue((JObject)ele.Value, paramsValue).Trim();
+                        string cmd = getCommandValue((JObject)ele.Value, paramsValue).Trim();
 
-                            if (!string.IsNullOrEmpty(cmd))
-                            {
-                                userOptLi.Add(cmd);
-                            }
-                        }
-                        catch (TypeErrorException err)
+                        if (!string.IsNullOrEmpty(cmd))
                         {
-                            throw new TypeErrorException("The type of key '" + ele.Key + "' is '" + err.Message
-                                + "' but you gived '" + paramsValue.GetType().Name + "'");
+                            userOptLi.Add(cmd);
                         }
                     }
                     catch (TypeErrorException err)
@@ -726,7 +717,7 @@ namespace unify_builder
                 if (cmpModel.ContainsKey("$default-tail"))
                 {
                     foreach (var ele in ((JArray)cmpModel["$default-tail"]).Values<string>())
-                        baseOptLi.Add(ele);
+                        userOptLi.Add(ele);
                 }
 
                 // format ${var} variables in string
