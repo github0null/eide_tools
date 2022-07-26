@@ -1361,18 +1361,17 @@ namespace unify_builder
             string listPath = outName + ".lst";
             string langOption = null;
 
-            List<string> commands = new(256);
             List<string> compiler_cmds = new(baseOpts[modelName]);
 
             if (langName != null && cModel.ContainsKey("$" + langName))
             {
                 langOption = cParams.ContainsKey(langName) ? cParams[langName].Value<string>() : "default";
-                commands.Add(getCommandValue((JObject)cModel["$" + langName], langOption));
+                compiler_cmds.Add(getCommandValue((JObject)cModel["$" + langName], langOption));
             }
 
             if (cModel.ContainsKey("$listPath"))
             {
-                commands.Add(getCommandValue((JObject)cModel["$listPath"], "")
+                compiler_cmds.Add(getCommandValue((JObject)cModel["$listPath"], "")
                     .Replace("${listPath}", toRelativePathForCompilerArgs(listPath, isQuote)));
             }
 
@@ -1443,6 +1442,8 @@ namespace unify_builder
                 compiler_cmds[i] = compiler_cmds[i]
                     .Replace("${outName}", outName);
             }
+
+            List<string> commands = new(256);
 
             // join commands
             if (onlyCmd == false) /* generate full command */
