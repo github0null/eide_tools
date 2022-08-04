@@ -933,28 +933,32 @@ namespace unify_builder
                         bundledList.Add(toRelativePathForCompilerArgs(objPath));
                 }
 
-                string bundledFullOutPath = outDir + Path.DirectorySeparatorChar + "no_entry_bundled.lib";
-                string bundledOutPath = toRelativePathForCompilerArgs(bundledFullOutPath);
+                // don't link empty 'no_entry_bundled.lib'
+                if (bundledList.Count > 0)
+                {
+                    string bundledFullOutPath = outDir + Path.DirectorySeparatorChar + "no_entry_bundled.lib";
+                    string bundledOutPath = toRelativePathForCompilerArgs(bundledFullOutPath);
 
-                string cliStr = "-rc ${out} ${in}"
-                    .Replace("${out}", bundledOutPath)
-                    .Replace("${in}", string.Join(" ", bundledList));
+                    string cliStr = "-rc ${out} ${in}"
+                        .Replace("${out}", bundledOutPath)
+                        .Replace("${in}", string.Join(" ", bundledList));
 
-                // dump cli args for user
-                string cliArgsPath = Path.ChangeExtension(bundledFullOutPath, ".args.txt");
-                if (string.IsNullOrEmpty(cliArgsPath)) throw new Exception("cannot generate '.args.txt' for: " + bundledFullOutPath);
-                File.WriteAllText(cliArgsPath, cliStr, encodings["linker"]);
+                    // dump cli args for user
+                    string cliArgsPath = Path.ChangeExtension(bundledFullOutPath, ".args.txt");
+                    if (string.IsNullOrEmpty(cliArgsPath)) throw new Exception("cannot generate '.args.txt' for: " + bundledFullOutPath);
+                    File.WriteAllText(cliArgsPath, cliStr, encodings["linker"]);
 
-                // del old .lib file
-                if (File.Exists(bundledFullOutPath)) File.Delete(bundledFullOutPath);
+                    // del old .lib file
+                    if (File.Exists(bundledFullOutPath)) File.Delete(bundledFullOutPath);
 
-                // make bundled lib
-                int exitCode = Program.runExe(getToolFullPathByModel("linker-lib"), cliStr, out string log);
-                if (exitCode != Program.CODE_DONE)
-                    throw new Exception("bundled lib file failed, exit code: " + exitCode + ", msg: " + log);
+                    // make bundled lib
+                    int exitCode = Program.runExe(getToolFullPathByModel("linker-lib"), cliStr, out string log);
+                    if (exitCode != Program.CODE_DONE)
+                        throw new Exception("bundled lib file failed, exit code: " + exitCode + ", msg: " + log);
 
-                // append to linker obj list
-                finalObjsLi.Add(bundledFullOutPath);
+                    // append to linker obj list
+                    finalObjsLi.Add(bundledFullOutPath);
+                }
 
                 // set real obj list
                 objList = finalObjsLi;
