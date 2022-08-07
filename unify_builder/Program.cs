@@ -1007,6 +1007,9 @@ namespace unify_builder
                 cmdLine += " " + stableCommand;
             }
 
+            // expand args in files
+            cmdLine = expandArgs(cmdLine);
+
             // repleace eide cmd vars
             string reOutDir = toRelativePathForCompilerArgs(outDir, false, false);
             cmdLine = cmdLine
@@ -1154,6 +1157,12 @@ namespace unify_builder
             return parameters.ContainsKey("target") ? parameters["target"].Value<string>() : "Debug";
         }
 
+        private string toAbsPathByProjectRoot(string path)
+        {
+            if (Utility.isAbsolutePath(path)) return path;
+            return cwd + Path.DirectorySeparatorChar + path;
+        }
+
         private string toAbsToolPath(string rawToolPath)
         {
             return binDir +
@@ -1203,6 +1212,155 @@ namespace unify_builder
         }
 
         //------------
+
+        private readonly Regex compilerOpts_argsFileVarMatcher = new(@"\$\{argsFile:(.+?)\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private string expandArgs(string str_)
+        {
+            var str = str_.Trim();
+
+            // insert args from file
+            {
+                var repList = new Dictionary<string, string>();
+
+                foreach (var m in compilerOpts_argsFileVarMatcher.Matches(str).ToList())
+                {
+                    if (m.Success && m.Groups.Count > 1)
+                    {
+                        var fpath = toAbsPathByProjectRoot(m.Groups[1].Value);
+                        var argLi = new List<string>(256);
+                        var fcont = trimComment(File.ReadAllText(fpath));
+
+                        foreach (var line in Program.CRLFMatcher.Split(fcont))
+                        {
+                            if (string.IsNullOrWhiteSpace(line))
+                                continue;
+
+                            argLi.Add(line.Trim());
+                        }
+
+                        var key = m.Groups[0].Value;
+                        var val = string.Join(' ', argLi).Trim();
+                        if (!repList.TryAdd(key, val))
+                        {
+                            repList[key] = val;
+                        }
+                    }
+                }
+
+                var sb = new StringBuilder(str);
+
+                foreach (var kv in repList)
+                {
+                    sb.Replace(kv.Key, kv.Value);
+                }
+
+                str = sb.ToString();
+            }
+
+            return str;
+        }
+
+        private string trimComment(string txt)
+        {
+            // comments:
+            //  /* xxxx */
+            //  // xxxx
+            //  # xxxx
+            //
+            // strings:
+            //  "xxx"
+
+            var str = new StringBuilder(2048);
+
+            var chrStk = new Stack<string>(16);
+
+            var isInString = () => {
+                if (chrStk.Count == 0) return false;
+                var s = chrStk.Peek();
+                return s == "\"";
+            };
+
+            var isInComment = () => chrStk.Count > 0;
+
+            var isInSingleLineComment = () => {
+                if (chrStk.Count == 0) return false;
+                var s = chrStk.Peek();
+                return s == "//" || s == "#";
+            };
+
+            var chr_prev = '\0';
+            for (var i = 0; i < txt.Length; i++)
+            {
+                var chr = txt[i];
+                var chr_next = (i + 1 < txt.Length) ? txt[i + 1] : '\0';
+
+                // in string region
+                if (isInString())
+                {
+                    str.Append(chr);
+
+                    if (chr == '"' && chr_prev != '\\')
+                    {
+                        chrStk.Pop();
+                    }
+                }
+
+                // in comment
+                else if (isInComment())
+                {
+                    if (isInSingleLineComment())
+                    {
+                        if (chr == '\n')
+                        {
+                            str.Append(chr);
+                            chrStk.Pop();
+                        }
+                    }
+
+                    else
+                    {
+                        if (chr_prev == '*' && chr == '/')
+                        {
+                            chrStk.Pop();
+                        }
+                    }
+                }
+
+                // normal char
+                else
+                {
+                    // '#...' comment
+                    if (chr == '#' && chr_prev != '\'' && chr_next != '\'')
+                    {
+                        chrStk.Push(chr.ToString());
+                    }
+
+                    // '/*...*/ or //...' comment
+                    else if (chr == '/' && (chr_next == '/' || chr_next == '*'))
+                    {
+                        chrStk.Push(chr.ToString() + chr_next.ToString());
+                        chr_prev = chr_next;
+                        i++; // skip '/' or '*'
+                        continue;
+                    }
+
+                    else
+                    {
+                        if (chr == '"' && chr_prev != '\\')
+                        {
+                            chrStk.Push(chr.ToString());
+                        }
+
+                        str.Append(chr);
+                    }
+                }
+
+                chr_prev = chr;
+            }
+
+            return str.ToString();
+        }
 
         // merge value
         private object mergeParamsList(JObject[] pList, string key, string paramsType)
@@ -1498,6 +1656,8 @@ namespace unify_builder
 
                 for (int i = 0; i < commands.Count; i++)
                 {
+                    commands[i] = expandArgs(commands[i]);
+
                     commands[i] = commands[i]
                         .Replace("${OutName}", reOutDir + compilerAttr_directorySeparator + formatPathForCompilerArgs(outFileName))
                         .Replace("${OutDir}", reOutDir)
