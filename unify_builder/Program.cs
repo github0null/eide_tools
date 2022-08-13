@@ -888,7 +888,7 @@ namespace unify_builder
 
             string lib_flags = getLinkerLibFlags();
 
-            string outFileName = getOutName();
+            string outElfName = getOutName();
 
             string compilerId = getCompilerId();
 
@@ -966,7 +966,7 @@ namespace unify_builder
 
             //--
 
-            string outName = outDir + Path.DirectorySeparatorChar + outFileName;
+            string outName = outDir + Path.DirectorySeparatorChar + outElfName;
             string outPath = outName + outSuffix;
             string mapPath = outName + mapSuffix;
             string stableCommand = string.Join(" ", baseOpts["linker"].Concat(userOpts["linker"]));
@@ -1013,7 +1013,7 @@ namespace unify_builder
             // repleace eide cmd vars
             string reOutDir = toRelativePathForCompilerArgs(outDir, false, false);
             cmdLine = cmdLine
-                .Replace("${OutName}", reOutDir + compilerAttr_directorySeparator + formatPathForCompilerArgs(outFileName))
+                .Replace("${OutName}", outElfName)
                 .Replace("${OutDir}", reOutDir);
 
             // replace system env
@@ -1471,7 +1471,7 @@ namespace unify_builder
 
             //--
 
-            string outFileName = null;
+            string _outFileName = null;
 
             if (outDirTree) // generate dir tree struct
             {
@@ -1491,11 +1491,11 @@ namespace unify_builder
                     if (!string.IsNullOrWhiteSpace(fDir))
                     {
                         Directory.CreateDirectory(outDir + Path.DirectorySeparatorChar + fDir);
-                        outFileName = fDir + Path.DirectorySeparatorChar + srcName;
+                        _outFileName = fDir + Path.DirectorySeparatorChar + srcName;
                     }
                     else // no parent dir
                     {
-                        outFileName = srcName;
+                        _outFileName = srcName;
                     }
                 }
 
@@ -1507,17 +1507,17 @@ namespace unify_builder
                     Regex drvReplacer = new Regex(@"^(?<drv>[a-z]):/", RegexOptions.IgnoreCase);
                     string fDir = Utility.toLocalPath(drvReplacer.Replace(fmtSrcDir, "${drv}/"));
                     Directory.CreateDirectory(outDir + Path.DirectorySeparatorChar + fDir);
-                    outFileName = fDir + Path.DirectorySeparatorChar + srcName;
+                    _outFileName = fDir + Path.DirectorySeparatorChar + srcName;
                 }
             }
 
             // generate to output root directly
             else
             {
-                outFileName = srcName;
+                _outFileName = srcName;
             }
 
-            string outName = getUniqueName(outDir + Path.DirectorySeparatorChar + outFileName);
+            string outName = getUniqueName(outDir + Path.DirectorySeparatorChar + _outFileName);
             string outPath = outName + outputSuffix;
             string refPath = outName + ".d"; // --depend ${refPath} 
             string listPath = outName + ".lst";
@@ -1651,7 +1651,10 @@ namespace unify_builder
 
             // repleace eide cmd vars and system envs
             {
-                string reOutDir = toRelativePathForCompilerArgs(outDir, false, false);
+                string fOutDir = Path.GetDirectoryName(outName);
+                string fOutNam = Path.GetFileName(outName);
+
+                string reOutDir = toRelativePathForCompilerArgs(fOutDir, false, false);
                 string reSrcDir = toRelativePathForCompilerArgs(srcDir, false, false);
 
                 for (int i = 0; i < commands.Count; i++)
@@ -1659,9 +1662,9 @@ namespace unify_builder
                     commands[i] = expandArgs(commands[i]);
 
                     commands[i] = commands[i]
-                        .Replace("${OutName}", reOutDir + compilerAttr_directorySeparator + formatPathForCompilerArgs(outFileName))
+                        .Replace("${OutName}", fOutNam)
                         .Replace("${OutDir}", reOutDir)
-                        .Replace("${FileName}", reSrcDir + compilerAttr_directorySeparator + srcName)
+                        .Replace("${FileName}", srcName)
                         .Replace("${FileDir}", reSrcDir);
 
                     commands[i] = Program.replaceEnvVariable(commands[i]);
@@ -3121,7 +3124,7 @@ namespace unify_builder
                 {
                     log("");
                     infoWithLable("", false);
-                    info("start outputting file ...");
+                    info("start outputting files ...");
 
                     foreach (CmdGenerator.CmdInfo outputCmdInfo in commandList)
                     {
