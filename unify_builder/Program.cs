@@ -2041,6 +2041,7 @@ namespace unify_builder
         static string refJsonName;
 
         static FileStream logStream = null;
+        static FileStream compilerLogStream = null;
 
         static bool enableNormalOut = true;
         static bool showRelativePathOnLog = false;
@@ -2520,6 +2521,7 @@ namespace unify_builder
                             }
                             break;
                         case "iar_stm8":
+                        case "iar_arm":
                             {
                                 /* compiler */
                                 ccOutputRender.Add(new Regex(@"(\swarning\[\w+\]:\s|^warning\[\w+\]:\s)",
@@ -2931,6 +2933,7 @@ namespace unify_builder
                         if (enableNormalOut || exitCode != CODE_DONE)
                         {
                             printCompileOutput(ccLog);
+                            storeCompileOutput(ccLog);
                         }
 
                         if (exitCode > ERR_LEVEL)
@@ -3006,6 +3009,7 @@ namespace unify_builder
                 {
                     log(""); // newline
                     printCompileOutput(linkerOut, true);
+                    storeCompileOutput(linkerOut, true);
                 }
 
                 if (linkerExitCode > ERR_LEVEL)
@@ -3051,7 +3055,8 @@ namespace unify_builder
                                         out ram_size, out rom_size, out mapLog);
                                     break;
                                 case "iar_stm8":
-                                    parseMapFileForIarStm8(mapFileFullPath,
+                                case "iar_arm":
+                                    parseMapFileForIar(mapFileFullPath,
                                         out ram_size, out rom_size, out mapLog);
                                     break;
                                 default:
@@ -3187,6 +3192,8 @@ namespace unify_builder
 
                 // dump log
                 appendLogs("[done]", "\tbuild successfully !");
+
+                dumpCompilerLog();
             }
             catch (Exception err)
             {
@@ -3201,6 +3208,8 @@ namespace unify_builder
 
                 // dump error log
                 appendErrLogs(err, errLogs.ToArray());
+
+                dumpCompilerLog();
 
                 // close and unlock log file
                 unlockLogs();
@@ -3276,7 +3285,7 @@ namespace unify_builder
             return argsLi.ToArray();
         }*/
 
-        static void parseMapFileForIarStm8(string mapFileFullPath,
+        static void parseMapFileForIar(string mapFileFullPath,
             out int ramSize, out int romSize, out string maplog)
         {
             ramSize = 0;
@@ -3645,6 +3654,14 @@ namespace unify_builder
             Console.Write(s);
         }
 
+        static List<string> compiler_log_cpp = new(256);
+        static List<string> compiler_log_lnk = new(256);
+        static void storeCompileOutput(string output, bool isLinker = false)
+        {
+            if (isLinker) compiler_log_lnk.Add(output);
+            else compiler_log_cpp.Add(output);
+        }
+
         static void printProgress(string label, float progress, string suffix = "")
         {
             const int BAR_MAX_LEN = 20;
@@ -3817,7 +3834,7 @@ namespace unify_builder
 
                     log("");
                     string logTxt = "   " + cmd_output;
-                    printCompileOutput(Regex.Replace(logTxt, @"(?<enter>\n)", "${enter}   "));
+                    Console.Write(Regex.Replace(logTxt, @"(?<enter>\n)", "${enter}   "));
 
                     if (!cmd.ignoreFailed)
                     {
@@ -4021,8 +4038,8 @@ namespace unify_builder
 
                             if (!string.IsNullOrWhiteSpace(logData.logTxt))
                             {
-                                string rStr = renderCompilerOutput(logData.logTxt);
-                                Console.Write(rStr);
+                                Console.Write(renderCompilerOutput(logData.logTxt));
+                                storeCompileOutput(logData.logTxt);
                             }
                         }
                     }
@@ -4505,6 +4522,7 @@ namespace unify_builder
                 case "AC5":
                     return ac5_parseRefLines(lines);
                 case "IAR_STM8":
+                case "IAR_ARM":
                     return ac5_parseRefLines(lines, 2);
                 case "SDCC":
                 case "AC6":
@@ -4626,18 +4644,59 @@ namespace unify_builder
                 string logPath = dumpPath + Path.DirectorySeparatorChar + "unify_builder.log";
                 logStream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.None);
             }
+
+            if (compilerLogStream == null)
+            {
+                string logPath = dumpPath + Path.DirectorySeparatorChar + "compiler.log";
+                compilerLogStream = new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            }
         }
 
         static void unlockLogs()
         {
             try
             {
+                // unify_builder.log
                 logStream.Flush();
                 logStream.Close();
+
+                // compiler.log
+                compilerLogStream.Flush();
+                compilerLogStream.Close();
             }
             catch (Exception)
             {
                 // nothing todo
+            }
+        }
+
+        static void dumpCompilerLog()
+        {
+            try
+            {
+                if (compilerLogStream != null)
+                {
+                    // cc log
+                    {
+                        var txt = ">>> cc" + OsInfo.instance().CRLF + OsInfo.instance().CRLF;
+                        txt += string.Join(OsInfo.instance().CRLF, compiler_log_cpp);
+                        compilerLogStream.Write(RuntimeEncoding.instance().Default.GetBytes(txt));
+                    }
+
+                    compilerLogStream.Write(RuntimeEncoding.instance().Default.GetBytes(
+                        OsInfo.instance().CRLF + OsInfo.instance().CRLF));
+
+                    // link log
+                    {
+                        var txt = ">>> ld" + OsInfo.instance().CRLF + OsInfo.instance().CRLF;
+                        txt += string.Join(OsInfo.instance().CRLF, compiler_log_lnk);
+                        compilerLogStream.Write(RuntimeEncoding.instance().Default.GetBytes(txt));
+                    }
+                }
+            }
+            catch (Exception _err)
+            {
+                error("log dump failed !, " + _err.Message);
             }
         }
 
@@ -4662,8 +4721,7 @@ namespace unify_builder
                         txt += Environment.NewLine;
                     }
 
-                    byte[] buf = RuntimeEncoding.instance().Default.GetBytes(txt);
-                    logStream.Write(buf, 0, buf.Length);
+                    logStream.Write(RuntimeEncoding.instance().Default.GetBytes(txt));
                 }
             }
             catch (Exception _err)
