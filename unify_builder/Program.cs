@@ -4656,13 +4656,13 @@ namespace unify_builder
         {
             try
             {
-                // unify_builder.log
-                logStream.Flush();
-                logStream.Close();
-
                 // compiler.log
                 compilerLogStream.Flush();
                 compilerLogStream.Close();
+
+                // unify_builder.log must be at last to flush
+                logStream.Flush();
+                logStream.Close();
             }
             catch (Exception)
             {
