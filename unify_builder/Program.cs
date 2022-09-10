@@ -11,6 +11,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using CommandLine;
 using CommandLine.Text;
 
@@ -3989,41 +3990,38 @@ namespace unify_builder
             return res.ToArray();
         }
 
-        struct TaskData
-        {
-            public ManualResetEvent _event;
-            public int index;
-            public int end;
-        }
-
         struct CompilerLogData
         {
             public string logTxt;
             public CmdGenerator.CmdInfo srcInfo;
         }
 
-        static void compileByMulThread(int thrNum, CmdGenerator.CmdInfo[] cmds, List<string> errLogs)
+        static void compileByMulThread(int thrNum, CmdGenerator.CmdInfo[] cmds_, List<string> errLogs)
         {
-            Exception err = null;
-            bool isBuildEnd = false;
-
-            BlockingCollection<CompilerLogData> ccLogQueue = new BlockingCollection<CompilerLogData>();
-            Thread compilerLogger;
-
             // print title
             info("start compilation (jobs: " + thrNum.ToString() + ") ...");
-            if (cmds.Length > 0) log("");
+            if (cmds_.Length > 0) log("");
+
+            Exception err = null;
+            bool isCompileDone = false;
+
+            BlockingCollection<CompilerLogData> ccLogQueue = new();
+            BlockingCollection<CmdGenerator.CmdInfo> cmdQueue = new();
+
+            // fill data
+            foreach (var item in cmds_) cmdQueue.Add(item);
 
             // create logger thread
+            Thread compilerLogger;
             {
                 compilerLogger = new Thread(delegate () {
 
                     int curProgress = 0;
-                    int tolProgress = cmds.Length;
+                    int tolProgress = cmds_.Length;
 
                     while (true)
                     {
-                        if (isBuildEnd && ccLogQueue.Count == 0)
+                        if (isCompileDone && ccLogQueue.Count == 0)
                             break; // exit
 
                         if (ccLogQueue.TryTake(out CompilerLogData logData, 100))
@@ -4048,16 +4046,16 @@ namespace unify_builder
                 compilerLogger.Start();
             }
 
-            // worker's function
-            ParameterizedThreadStart workerFunc = delegate (object _dat) {
+            // compiler worker
+            var workerFunc = () => {
 
-                TaskData dat = (TaskData)_dat;
-
-                for (int index = dat.index; index < dat.end; index++)
+                while (cmdQueue.Count > 0)
                 {
-                    var ccArgs = cmds[index];
+                    if (err != null)
+                        break; // sometask compile error, exit
 
-                    if (err != null) break; // compile error, exit
+                    if (!cmdQueue.TryTake(out CmdGenerator.CmdInfo ccArgs, 100))
+                        continue;
 
                     int exitCode;
                     string cclog;
@@ -4114,37 +4112,20 @@ namespace unify_builder
                         break;
                     }
                 }
-
-                dat._event.Set();
             };
 
-            // alloc some work threads and start compile
-            ManualResetEvent[] tEvents = new ManualResetEvent[thrNum];
+            // alloc work threads and start compile
+            Task[] tasks = new Task[thrNum];
             {
-                Thread[] tasks = new Thread[thrNum];
-                int part = cmds.Length / thrNum; // amount of src files for per workers
-
                 for (int i = 0; i < thrNum; i++)
                 {
-                    tEvents[i] = new ManualResetEvent(false);
-                    tasks[i] = new Thread(workerFunc);
-
-                    TaskData param = new TaskData {
-                        _event = tEvents[i],
-                        index = i * part
-                    };
-
-                    param.end = (i == thrNum - 1) ? (cmds.Length) : (param.index + part);
-
-                    tasks[i].Start(param);
+                    tasks[i] = Task.Run(workerFunc);
                 }
             }
+            Task.WaitAll(tasks);
 
-            WaitHandle.WaitAll(tEvents); // wait work thread go end
-
-            isBuildEnd = true; // notify build is end
-
-            compilerLogger.Join(); // wait logger end
+            isCompileDone = true;   // notify logger the builder is end
+            compilerLogger.Join();  // wait logger end
 
             if (err != null)
             {
