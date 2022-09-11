@@ -4321,82 +4321,74 @@ namespace unify_builder
 
                 foreach (var cmd in commands.Values)
                 {
-                    if (File.Exists(cmd.outPath))
-                    {
-                        DateTime objLastWriteTime = File.GetLastWriteTime(cmd.outPath);
-                        DateTime srcLastWriteTime = File.GetLastWriteTime(cmd.sourcePath);
-
-                        // src file is newer than obj file
-                        if (DateTime.Compare(srcLastWriteTime, objLastWriteTime) > 0)
-                        {
-                            AddToChangeList(cmd);
-                        }
-
-                        // file options is newer than obj file
-                        else if (srcParams.ContainsKey(cmd.sourcePath) &&
-                            DateTime.Compare(optLastWriteTime, objLastWriteTime) > 0)
-                        {
-                            AddToChangeList(cmd);
-                        }
-
-                        // check referance is changed
-                        else
-                        {
-                            string refFilePath = Path.GetDirectoryName(cmd.outPath)
-                                + Path.DirectorySeparatorChar + Path.GetFileNameWithoutExtension(cmd.outPath) + ".d";
-
-                            if (File.Exists(refFilePath))
-                            {
-                                string[] refList = parseRefFile(refFilePath, modelID);
-
-                                if (refList != null)
-                                {
-                                    foreach (var refPath in refList)
-                                    {
-                                        if (diffCache.ContainsKey(refPath))
-                                        {
-                                            if (diffCache[refPath])
-                                            {
-                                                AddToChangeList(cmd);
-                                                break; // file need recompile, exit
-                                            }
-                                        }
-                                        else // not in cache
-                                        {
-                                            if (File.Exists(refPath))
-                                            {
-                                                DateTime lastWrTime = File.GetLastWriteTime(refPath);
-                                                bool isOutOfDate = DateTime.Compare(lastWrTime, objLastWriteTime) > 0;
-                                                diffCache.Add(refPath, isOutOfDate); // add to cache
-
-                                                if (isOutOfDate)
-                                                {
-                                                    AddToChangeList(cmd);
-                                                    break; // out of date, need recompile, exit
-                                                }
-                                            }
-                                            else // not found ref, ref file need update
-                                            {
-                                                AddToChangeList(cmd);
-                                                break; // need recompile, exit
-                                            }
-                                        }
-                                    }
-                                }
-                                else // not found parser or parse error
-                                {
-                                    AddToChangeList(cmd);
-                                }
-                            }
-                            else // not found ref file
-                            {
-                                AddToChangeList(cmd);
-                            }
-                        }
-                    }
-                    else
+                    if (!File.Exists(cmd.outPath)) // not compiled
                     {
                         AddToChangeList(cmd);
+                        continue;
+                    }
+
+                    DateTime objLastWriteTime = File.GetLastWriteTime(cmd.outPath);
+                    DateTime srcLastWriteTime = File.GetLastWriteTime(cmd.sourcePath);
+
+                    // src file is newer than obj file
+                    if (DateTime.Compare(srcLastWriteTime, objLastWriteTime) > 0)
+                    {
+                        AddToChangeList(cmd);
+                    }
+
+                    // file options is newer than obj file
+                    else if (srcParams.ContainsKey(cmd.sourcePath) &&
+                        DateTime.Compare(optLastWriteTime, objLastWriteTime) > 0)
+                    {
+                        AddToChangeList(cmd);
+                    }
+
+                    // referance is changed ?
+                    else
+                    {
+                        string refFilePath = Path.GetDirectoryName(cmd.outPath)
+                            + Path.DirectorySeparatorChar + Path.GetFileNameWithoutExtension(cmd.outPath) + ".d";
+
+                        if (!File.Exists(refFilePath))
+                        {
+                            AddToChangeList(cmd);
+                            continue; // not found ref file
+                        }
+
+                        var refList = parseRefFile(refFilePath, modelID)
+                            .Where(p => p != cmd.outPath && p != cmd.sourcePath);
+
+                        foreach (var refPath in refList)
+                        {
+                            if (diffCache.ContainsKey(refPath))
+                            {
+                                if (diffCache[refPath])
+                                {
+                                    AddToChangeList(cmd);
+                                    break; // file need recompile, exit
+                                }
+                            }
+                            else // not in cache
+                            {
+                                if (File.Exists(refPath))
+                                {
+                                    DateTime lastWrTime = File.GetLastWriteTime(refPath);
+                                    bool isOutOfDate = DateTime.Compare(lastWrTime, objLastWriteTime) > 0;
+                                    diffCache.Add(refPath, isOutOfDate); // add to cache
+
+                                    if (isOutOfDate)
+                                    {
+                                        AddToChangeList(cmd);
+                                        break; // out of date, need recompile, exit
+                                    }
+                                }
+                                else // not found ref, ref file need update
+                                {
+                                    AddToChangeList(cmd);
+                                    break; // need recompile, exit
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -4414,14 +4406,14 @@ namespace unify_builder
 
         static string toAbsolutePath(string _repath)
         {
-            string repath = Utility.toLocalPath(_repath);
+            string repath = _repath.Trim();
 
-            if (repath.Length > 1 && char.IsLetter(repath[0]) && repath[1] == ':')
+            if (Utility.isAbsolutePath(repath))
             {
                 return repath;
             }
 
-            return projectRoot + Path.DirectorySeparatorChar + repath;
+            return Utility.formatPath(projectRoot + Path.DirectorySeparatorChar + repath);
         }
 
         static string toHumanReadablePath(string absPath)
@@ -4504,7 +4496,7 @@ namespace unify_builder
                     return ac5_parseRefLines(lines);
                 case "IAR_STM8":
                 case "IAR_ARM":
-                    return ac5_parseRefLines(lines, 2);
+                    return ac5_parseRefLines(lines);
                 case "SDCC":
                 case "AC6":
                 case "GCC":
