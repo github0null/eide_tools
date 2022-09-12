@@ -3776,12 +3776,19 @@ namespace unify_builder
 
         public static string replaceEnvVariable(string str)
         {
-            foreach (var keyValue in curEnvs)
+            // max deep: 5
+            for (int i = 0; i < 5; i++)
             {
-                str = str
-                    .Replace("%" + keyValue.Key + "%", keyValue.Value)
-                    .Replace("${" + keyValue.Key + "}", keyValue.Value)
-                    .Replace("$(" + keyValue.Key + ")", keyValue.Value);
+                if (!(str.Contains('%') || str.Contains("$(") || str.Contains("${")))
+                    break; // no any variable in str, end
+
+                foreach (var keyValue in curEnvs)
+                {
+                    str = str
+                        .Replace("%" + keyValue.Key + "%", keyValue.Value)
+                        .Replace("${" + keyValue.Key + "}", keyValue.Value)
+                        .Replace("$(" + keyValue.Key + ")", keyValue.Value);
+                }
             }
 
             return str;
