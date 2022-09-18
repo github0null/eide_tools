@@ -2612,6 +2612,27 @@ namespace unify_builder
                 setEnvValue("EIDE_CUR_COMPILER_NAME_FULL", cmdGen.compilerFullName);
                 setEnvValue("EIDE_CUR_COMPILER_VERSION", cmdGen.compilerVersion);
 
+                // export compiler base commands
+                {
+                    string basecli;
+
+                    basecli = cmdGen.fromCFile("<c_file>", true).commandLine;
+                    basecli = Regex.Replace(basecli, @"[^\s]+<c_file>[^\s]+", "");
+                    setEnvValue("EIDE_CUR_COMPILER_C_BASE_ARGS", basecli);
+
+                    basecli = cmdGen.fromCppFile("<cxx_file>", true).commandLine;
+                    basecli = Regex.Replace(basecli, @"[^\s]+<cxx_file>[^\s]+", "");
+                    setEnvValue("EIDE_CUR_COMPILER_CXX_BASE_ARGS", basecli);
+
+                    basecli = cmdGen.fromAsmFile("<asm_file>", true).commandLine;
+                    basecli = Regex.Replace(basecli, @"[^\s]+<asm_file>[^\s]+", "");
+                    setEnvValue("EIDE_CUR_COMPILER_ASM_BASE_ARGS", basecli);
+
+                    basecli = cmdGen.genLinkCommand(new List<string> { "<obj_1>" }, true).commandLine;
+                    basecli = Regex.Replace(basecli, @"[^\s]+<obj_1>[^\s]+", "");
+                    setEnvValue("EIDE_CUR_COMPILER_LINKER_BASE_ARGS", basecli);
+                }
+
                 // preset env vars for tasks
                 setEnvValue("TargetName", cmdGen.getOutName());
                 setEnvValue("ConfigName", cmdGen.getBuildConfigName());
