@@ -953,7 +953,7 @@ namespace unify_builder
                     if (File.Exists(bundledFullOutPath)) File.Delete(bundledFullOutPath);
 
                     // make bundled lib
-                    int exitCode = Program.runExe(getToolFullPathByModel("linker-lib"), cliStr, out string log);
+                    int exitCode = Program.runExe(toAbsToolPath(getRawToolPath("linker-lib")), cliStr, out string log);
                     if (exitCode != Program.CODE_DONE)
                         throw new Exception("bundled lib file failed, exit code: " + exitCode + ", msg: " + log);
 
@@ -1068,7 +1068,7 @@ namespace unify_builder
             return new CmdInfo {
                 compilerId = compilerId.ToLower(),
                 compilerType = "linker",
-                exePath = getToolFullPathById("linker"),
+                exePath = getActivedToolFullPath("linker"),
                 commandLine = commandLine,
                 sourcePath = mapPath,
                 outPath = outPath,
@@ -1166,13 +1166,12 @@ namespace unify_builder
 
         private string toAbsToolPath(string rawToolPath)
         {
-            return binDir +
-                rawToolPath.Replace("${toolPrefix}", toolPrefix);
+            return binDir + rawToolPath.Replace("${toolPrefix}", toolPrefix);
         }
 
-        public string getToolFullPathById(string id)
+        public string getRawToolPath(string name)
         {
-            return binDir + getActivedRawToolPath(id);
+            return model["groups"][name]["$path"].Value<string>().Replace("${toolPrefix}", toolPrefix);
         }
 
         public string getActivedRawToolPath(string name)
@@ -1180,9 +1179,9 @@ namespace unify_builder
             return models[name]["$path"].Value<string>();
         }
 
-        public string getToolFullPathByModel(string name)
+        public string getActivedToolFullPath(string name)
         {
-            return toAbsToolPath(model["groups"][name]["$path"].Value<string>());
+            return binDir + getActivedRawToolPath(name);
         }
 
         public string getModelName()
@@ -1674,7 +1673,7 @@ namespace unify_builder
 
             string commandLines = compilerAttr_commandPrefix + string.Join(" ", commands.ToArray());
             string compilerArgs = commandLines;
-            string exeFullPath = getToolFullPathById(modelName);
+            string exeFullPath = getActivedToolFullPath(modelName);
 
             // save raw compiler args
             FileInfo paramFile = new(outName + paramsSuffix);
@@ -2599,18 +2598,31 @@ namespace unify_builder
                     }
                 }
 
+                // compiler path
+                var CC_PATH = binDir + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("c");
+                var AS_PATH = binDir + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("asm");
+                var CXX_PATH = binDir + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("cpp");
+                var LD_PATH = binDir + Path.DirectorySeparatorChar + cmdGen.getRawToolPath("linker");
+
                 // export compiler bin folder to PATH
-                string ccFolder = Path.GetDirectoryName(binDir + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("c"));
-                setEnvValue("PATH", ccFolder);
+                var CC_DIR = Path.GetDirectoryName(CC_PATH);
+                setEnvValue("PATH", CC_DIR);
 
                 //
                 setEnvValue("EIDE_CUR_OS_TYPE", OsInfo.instance().OsType);
 
-                // export compiler info to env
+                // export compiler info
                 setEnvValue("EIDE_CUR_COMPILER_ID", cmdGen.getCompilerId().ToLower());
                 setEnvValue("EIDE_CUR_COMPILER_NAME", cmdGen.compilerName);
                 setEnvValue("EIDE_CUR_COMPILER_NAME_FULL", cmdGen.compilerFullName);
                 setEnvValue("EIDE_CUR_COMPILER_VERSION", cmdGen.compilerVersion);
+
+                // export compiler path
+                setEnvValue("EIDE_CUR_COMPILER_PREFIX", cmdGen.getToolPrefix());
+                setEnvValue("EIDE_CUR_COMPILER_CC_PATH", CC_PATH);
+                setEnvValue("EIDE_CUR_COMPILER_AS_PATH", AS_PATH);
+                setEnvValue("EIDE_CUR_COMPILER_LD_PATH", LD_PATH);
+                setEnvValue("EIDE_CUR_COMPILER_CXX_PATH", CXX_PATH);
 
                 // export compiler base commands
                 {
@@ -2618,7 +2630,7 @@ namespace unify_builder
 
                     basecli = cmdGen.fromCFile("<c_file>", true).commandLine;
                     basecli = Regex.Replace(basecli, @"[^\s]+<c_file>[^\s]+", "");
-                    setEnvValue("EIDE_CUR_COMPILER_C_BASE_ARGS", basecli);
+                    setEnvValue("EIDE_CUR_COMPILER_CC_BASE_ARGS", basecli);
 
                     basecli = cmdGen.fromCppFile("<cxx_file>", true).commandLine;
                     basecli = Regex.Replace(basecli, @"[^\s]+<cxx_file>[^\s]+", "");
@@ -2626,11 +2638,11 @@ namespace unify_builder
 
                     basecli = cmdGen.fromAsmFile("<asm_file>", true).commandLine;
                     basecli = Regex.Replace(basecli, @"[^\s]+<asm_file>[^\s]+", "");
-                    setEnvValue("EIDE_CUR_COMPILER_ASM_BASE_ARGS", basecli);
+                    setEnvValue("EIDE_CUR_COMPILER_AS_BASE_ARGS", basecli);
 
                     basecli = cmdGen.genLinkCommand(new List<string> { "<obj_1>" }, true).commandLine;
                     basecli = Regex.Replace(basecli, @"[^\s]+<obj_1>[^\s]+", "");
-                    setEnvValue("EIDE_CUR_COMPILER_LINKER_BASE_ARGS", basecli);
+                    setEnvValue("EIDE_CUR_COMPILER_LD_BASE_ARGS", basecli);
                 }
 
                 // preset env vars for tasks
@@ -2642,7 +2654,7 @@ namespace unify_builder
 
                 setEnvValue("ToolchainRoot", binDir);
                 setEnvValue("CompilerPrefix", cmdGen.getToolPrefix());
-                setEnvValue("CompilerFolder", ccFolder);
+                setEnvValue("CompilerFolder", CC_DIR);
                 setEnvValue("CompilerId", cmdGen.getCompilerId().ToLower());
                 setEnvValue("CompilerName", cmdGen.compilerName);
                 setEnvValue("CompilerFullName", cmdGen.compilerFullName);
@@ -2653,7 +2665,7 @@ namespace unify_builder
                 addCliVar("re:BuilderFolder", Utility.toRelativePath(projectRoot, builderDir) ?? builderDir);
                 addCliVar("re:OutDir", Utility.toRelativePath(projectRoot, outDir) ?? outDir);
                 addCliVar("re:ToolchainRoot", Utility.toRelativePath(projectRoot, binDir) ?? binDir);
-                addCliVar("re:CompilerFolder", Utility.toRelativePath(projectRoot, ccFolder) ?? ccFolder);
+                addCliVar("re:CompilerFolder", Utility.toRelativePath(projectRoot, CC_DIR) ?? CC_DIR);
 
                 if (checkMode(BuilderMode.DEBUG))
                 {
@@ -2715,7 +2727,7 @@ namespace unify_builder
                 {
                     if (cList.Count > 0)
                     {
-                        string absPath = replaceEnvVariable(cmdGen.getToolFullPathById("c"));
+                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("c"));
 
                         if (!File.Exists(absPath))
                         {
@@ -2725,7 +2737,7 @@ namespace unify_builder
 
                     if (cppList.Count > 0)
                     {
-                        string absPath = replaceEnvVariable(cmdGen.getToolFullPathById("cpp"));
+                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("cpp"));
 
                         if (!File.Exists(absPath))
                         {
@@ -2735,7 +2747,7 @@ namespace unify_builder
 
                     if (asmList.Count > 0)
                     {
-                        string absPath = replaceEnvVariable(cmdGen.getToolFullPathById("asm"));
+                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("asm"));
 
                         if (!File.Exists(absPath))
                         {
@@ -2744,7 +2756,7 @@ namespace unify_builder
                     }
 
                     {
-                        string absPath = replaceEnvVariable(cmdGen.getToolFullPathById("linker"));
+                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("linker"));
 
                         if (!File.Exists(absPath))
                         {
@@ -3725,30 +3737,31 @@ namespace unify_builder
 
         static void setEnvValue(string key, string value)
         {
-            // del old
-            if (curEnvs.ContainsKey(key)) curEnvs.Remove(key);
-
-            // append for 'PATH' var
+            // insert to 'PATH'
             if (key.ToLower() == "path")
             {
-                string val = Environment.GetEnvironmentVariable(key);
+                key = OsInfo.instance().OsType == "win32" ? "Path" : "PATH";
 
-                if (val != null) // found path, append it
+                string PATH_VAL = Environment.GetEnvironmentVariable(key);
+
+                if (PATH_VAL != null) // found 'PATH', append it
                 {
-                    val = val + Path.PathSeparator + value;
-                    Environment.SetEnvironmentVariable(key, val);
+                    PATH_VAL = value + Path.PathSeparator + PATH_VAL;
+                    Environment.SetEnvironmentVariable(key, PATH_VAL);
                 }
-                else // not found, set it
+                else // not found 'PATH', set it
                 {
                     Environment.SetEnvironmentVariable(key, value);
                 }
-
-                return;
             }
 
             // set env
-            Environment.SetEnvironmentVariable(key, value);
-            curEnvs.Add(key, value);
+            else
+            {
+                if (curEnvs.ContainsKey(key)) curEnvs[key] = value;
+                else curEnvs.Add(key, value);
+                Environment.SetEnvironmentVariable(key, value);
+            }
         }
 
         public static string replaceEnvVariable(string str)
