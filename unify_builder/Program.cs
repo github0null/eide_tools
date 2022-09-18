@@ -4216,8 +4216,8 @@ namespace unify_builder
                         // print task name
                         log("\r\n>> " + taskName + getBlanks(maxLen - taskName.Length) + "\t\t", false);
 
-                        bool isBashCmd = OsInfo.instance().OsType == "win32" &&
-                            Regex.IsMatch(command, "^.*?\\bbash(?:\\.exe)?(?:\"|'|\\s)", RegexOptions.IgnoreCase);
+                        bool useBashInCmd = OsInfo.instance().OsType == "win32" &&
+                            Regex.IsMatch(command, "^(?:.+\\b)?bash(?:\\.exe)?(?:\\s|\")", RegexOptions.IgnoreCase);
 
                         // replace env path
                         for (int i = 0; i < 5; i++)
@@ -4229,7 +4229,8 @@ namespace unify_builder
                             {
                                 var value = kv.Value;
 
-                                if (isBashCmd)
+                                // '\' -> '/' in var for win32 bash
+                                if (useBashInCmd)
                                 {
                                     value = Utility.toUnixPath(value);
                                 }
