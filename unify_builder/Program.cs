@@ -2021,7 +2021,8 @@ namespace unify_builder
         static Int64 paramsMtime = 0; // source file params modify time
 
         static readonly string appBaseDir = AppDomain.CurrentDomain.SetupInformation.ApplicationBase.TrimEnd(Path.DirectorySeparatorChar);
-        static readonly Dictionary<string, string> curEnvs = new(64);
+        static readonly Dictionary<string, string> curEnvs = new(64); // sys envs
+        static readonly Dictionary<string, string> cliVars = new(64); // format: <key: 'ENV_NAME', val: 'ENV_VALxxxx'>
 
         // Used to determine whether the received
         // return code is an error code
@@ -2405,9 +2406,6 @@ namespace unify_builder
 
             Dictionary<string, CmdGenerator.CmdInfo> commands = new(512);
 
-            // task envs
-            Dictionary<string, string> taskEnvs = new(32); // format: <key: 'ENV_NAME', val: 'ENV_VALxxxx'>
-
             // compiler errlog list
             List<string> errLogs = new(512);
 
@@ -2421,9 +2419,6 @@ namespace unify_builder
             {
                 Directory.CreateDirectory(outDir);
 
-                //
-                setEnvValue("EIDE_CUR_OS_TYPE", OsInfo.instance().OsType);
-
                 // add appBase folder to system env
                 setEnvValue("PATH", appBaseDir);
 
@@ -2432,7 +2427,7 @@ namespace unify_builder
                     Path.DirectorySeparatorChar + "msys" +
                     Path.DirectorySeparatorChar + "bin");
 
-                // add env from bulder.params
+                // add user env from bulder.params
                 if (paramsObj.ContainsKey("env"))
                 {
                     JObject envs = (JObject)paramsObj["env"];
@@ -2442,17 +2437,15 @@ namespace unify_builder
                         string envName = field.Name.ToString().Trim();
                         string envValue = field.Value.ToString().Trim();
 
-                        if (!Regex.IsMatch(envName, @"^[\w\$]+$"))
+                        if (!Regex.IsMatch(envName, @"^[\w\$]+$") ||
+                            envName.ToLower() == "path")
                         {
-                            warn(string.Format("ignore incorrect env name: '{0}'", envName));
+                            warn(string.Format("ignore incorrect env: '{0}'", envName));
                             continue;
                         }
 
-                        // set to shell env
+                        // add shell env
                         setEnvValue(envName, envValue);
-
-                        // set to task env
-                        taskEnvs.Add("${" + envName + "}", envValue);
 
                         // set cmd prefix
                         if (envName == "COMPILER_CMD_PREFIX" && !string.IsNullOrWhiteSpace(envValue))
@@ -2610,6 +2603,9 @@ namespace unify_builder
                 string ccFolder = Path.GetDirectoryName(binDir + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("c"));
                 setEnvValue("PATH", ccFolder);
 
+                //
+                setEnvValue("EIDE_CUR_OS_TYPE", OsInfo.instance().OsType);
+
                 // export compiler info to env
                 setEnvValue("EIDE_CUR_COMPILER_ID", cmdGen.getCompilerId().ToLower());
                 setEnvValue("EIDE_CUR_COMPILER_NAME", cmdGen.compilerName);
@@ -2617,27 +2613,26 @@ namespace unify_builder
                 setEnvValue("EIDE_CUR_COMPILER_VERSION", cmdGen.compilerVersion);
 
                 // preset env vars for tasks
-                {
-                    taskEnvs.Add("${TargetName}", cmdGen.getOutName());
-                    taskEnvs.Add("${ConfigName}", cmdGen.getBuildConfigName());
-                    taskEnvs.Add("${ProjectRoot}", projectRoot);
-                    taskEnvs.Add("${BuilderFolder}", builderDir);
-                    taskEnvs.Add("${OutDir}", outDir);
+                setEnvValue("TargetName", cmdGen.getOutName());
+                setEnvValue("ConfigName", cmdGen.getBuildConfigName());
+                setEnvValue("ProjectRoot", projectRoot);
+                setEnvValue("BuilderFolder", builderDir);
+                setEnvValue("OutDir", outDir);
 
-                    taskEnvs.Add("${ToolchainRoot}", binDir);
-                    taskEnvs.Add("${CompilerPrefix}", cmdGen.getToolPrefix());
-                    taskEnvs.Add("${CompilerFolder}", ccFolder);
-                    taskEnvs.Add("${CompilerId}", cmdGen.getCompilerId().ToLower());
-                    taskEnvs.Add("${CompilerName}", cmdGen.compilerName);
-                    taskEnvs.Add("${CompilerFullName}", cmdGen.compilerFullName);
-                    taskEnvs.Add("${CompilerVersion}", cmdGen.compilerVersion);
+                setEnvValue("ToolchainRoot", binDir);
+                setEnvValue("CompilerPrefix", cmdGen.getToolPrefix());
+                setEnvValue("CompilerFolder", ccFolder);
+                setEnvValue("CompilerId", cmdGen.getCompilerId().ToLower());
+                setEnvValue("CompilerName", cmdGen.compilerName);
+                setEnvValue("CompilerFullName", cmdGen.compilerFullName);
+                setEnvValue("CompilerVersion", cmdGen.compilerVersion);
 
-                    taskEnvs.Add("${re:ProjectRoot}", ".");
-                    taskEnvs.Add("${re:BuilderFolder}", Utility.toRelativePath(projectRoot, builderDir) ?? builderDir);
-                    taskEnvs.Add("${re:OutDir}", Utility.toRelativePath(projectRoot, outDir) ?? outDir);
-                    taskEnvs.Add("${re:ToolchainRoot}", Utility.toRelativePath(projectRoot, binDir) ?? binDir);
-                    taskEnvs.Add("${re:CompilerFolder}", Utility.toRelativePath(projectRoot, ccFolder) ?? ccFolder);
-                }
+                // only for task command
+                addCliVar("re:ProjectRoot", ".");
+                addCliVar("re:BuilderFolder", Utility.toRelativePath(projectRoot, builderDir) ?? builderDir);
+                addCliVar("re:OutDir", Utility.toRelativePath(projectRoot, outDir) ?? outDir);
+                addCliVar("re:ToolchainRoot", Utility.toRelativePath(projectRoot, binDir) ?? binDir);
+                addCliVar("re:CompilerFolder", Utility.toRelativePath(projectRoot, ccFolder) ?? ccFolder);
 
                 if (checkMode(BuilderMode.DEBUG))
                 {
@@ -2741,7 +2736,7 @@ namespace unify_builder
                 switchWorkDir(projectRoot);
 
                 // run tasks before build
-                if (runTasks("RUN TASKS BEFORE BUILD", "beforeBuildTasks", taskEnvs) != CODE_DONE)
+                if (runTasks("PRE-BUILD TASKS", "beforeBuildTasks") != CODE_DONE)
                 {
                     throw new Exception("Run Tasks Failed !, Stop Build !");
                 }
@@ -3221,7 +3216,7 @@ namespace unify_builder
             try
             {
                 switchWorkDir(projectRoot);
-                runTasks("RUN TASKS AFTER BUILD", "afterBuildTasks", taskEnvs);
+                runTasks("POST-BUILD TASKS", "afterBuildTasks");
                 resetWorkDir();
             }
             catch (Exception err)
@@ -3234,57 +3229,6 @@ namespace unify_builder
 
             return CODE_DONE;
         }
-
-        /*static string[] parseCommandLineArgs(string cliStr)
-        {
-            var argsLi = new List<string>(32);
-
-            bool inQuote = false;
-            string curArg = string.Empty;
-
-            foreach (var char_ in cliStr)
-            {
-                if (char_ == '"' && (curArg.Length == 0 || curArg[^1] != '\\')) // is a "..." start or end
-                {
-                    if (inQuote)
-                    {
-                        inQuote = false;
-                        if (!string.IsNullOrWhiteSpace(curArg)) argsLi.Add(curArg);
-                        curArg = string.Empty;
-                    }
-                    else
-                    {
-                        inQuote = true;
-                    }
-
-                    continue; // skip '"'
-                }
-
-                if (inQuote) // in "..." region
-                {
-                    curArg += char_;
-                }
-                else // out "..." region
-                {
-                    if (char.IsWhiteSpace(char_))
-                    {
-                        if (!string.IsNullOrWhiteSpace(curArg)) argsLi.Add(curArg);
-                        curArg = string.Empty;
-                    }
-                    else
-                    {
-                        curArg += char_;
-                    }
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(curArg))
-            {
-                argsLi.Add(curArg);
-            }
-
-            return argsLi.ToArray();
-        }*/
 
         static void parseMapFileForIar(string mapFileFullPath,
             out int ramSize, out int romSize, out string maplog)
@@ -3746,6 +3690,18 @@ namespace unify_builder
 
         //---
 
+        static void addCliVar(string key, string val)
+        {
+            if (cliVars.ContainsKey(key))
+            {
+                cliVars[key] = val;
+            }
+            else
+            {
+                cliVars.Add(key, val);
+            }
+        }
+
         static void setEnvValue(string key, string value)
         {
             // del old
@@ -4154,8 +4110,14 @@ namespace unify_builder
             return new string(buf);
         }
 
-        static int runTasks(string label, string fieldName, Dictionary<string, string> envKvMap)
+        static int runTasks(string label, string fieldName)
         {
+            var vars = new Dictionary<string, string>(64);
+            {
+                foreach (var kv in curEnvs) vars.TryAdd(kv.Key, kv.Value);
+                foreach (var kv in cliVars) vars.TryAdd(kv.Key, kv.Value);
+            }
+
             JObject options = (JObject)paramsObj[CmdGenerator.optionKey];
 
             if (options.ContainsKey(fieldName))
@@ -4208,34 +4170,51 @@ namespace unify_builder
                         if (cmd.ContainsKey("disable")
                             && cmd["disable"].Type == JTokenType.Boolean
                             && cmd["disable"].Value<bool>())
-                        {
-                            // task is disabled, ignore it !
-                            continue;
-                        }
-
-                        if (!cmd.ContainsKey("name"))
-                        {
-                            throw new Exception("task name can't be null !");
-                        }
-
-                        // print task name
-                        string tName = cmd["name"].Value<string>();
-                        log("\r\n>> " + tName + getBlanks(maxLen - tName.Length) + "\t\t", false);
+                            continue; // task is disabled, ignore it !
 
                         if (!cmd.ContainsKey("command"))
-                        {
-                            throw new Exception("task command line can't be null !");
-                        }
+                            continue; // no command, ignored
 
                         string command = cmd["command"].Value<string>().Trim();
 
-                        // replace env path
-                        foreach (var kv in envKvMap)
+                        if (string.IsNullOrEmpty(command))
+                            continue; // empty command, ignored
+
+                        string taskName = command;
+
+                        if (cmd.ContainsKey("name"))
                         {
-                            var pattern = kv.Key
-                                .Replace("$", "\\$")
-                                .Replace("{", "\\{").Replace("}", "\\}");
-                            command = Regex.Replace(command, pattern, kv.Value, RegexOptions.IgnoreCase);
+                            var n = cmd["name"].Value<string>().Trim();
+
+                            if (!string.IsNullOrEmpty(n))
+                            {
+                                taskName = n;
+                            }
+                        }
+
+                        // print task name
+                        log("\r\n>> " + taskName + getBlanks(maxLen - taskName.Length) + "\t\t", false);
+
+                        bool isBashCmd = OsInfo.instance().OsType == "win32" &&
+                            Regex.IsMatch(command, "^.*?\\bbash(?:\\.exe)?(?:\"|'|\\s)", RegexOptions.IgnoreCase);
+
+                        // replace env path
+                        for (int i = 0; i < 5; i++)
+                        {
+                            if (!command.Contains("${"))
+                                break;
+
+                            foreach (var kv in vars)
+                            {
+                                var value = kv.Value;
+
+                                if (isBashCmd)
+                                {
+                                    value = Utility.toUnixPath(value);
+                                }
+
+                                command = Regex.Replace(command, "\\$\\{" + kv.Key + "\\}", value, RegexOptions.IgnoreCase);
+                            }
                         }
 
                         // run command
@@ -4268,8 +4247,7 @@ namespace unify_builder
                 }
                 catch (Exception e)
                 {
-                    warn("run task failed ! " + e.Message);
-                    warnWithLable("can not parse task information, aborted !\r\n");
+                    error("failed on '" + label + "', msg: " + e.Message);
                 }
             }
 
