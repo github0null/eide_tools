@@ -4308,7 +4308,22 @@ namespace unify_builder
             }
         }
 
-        static Dictionary<string, bool> diffCache = new(512);
+        static Dictionary<string, DateTime> _srcRefsMtCache = new(512);
+        static DateTime getSrcRefLastModifyTime(string fpath) 
+        {
+            if (_srcRefsMtCache.ContainsKey(fpath))
+            {
+                return _srcRefsMtCache[fpath];
+            }
+
+            var lastWrTime = File.Exists(fpath) 
+                ? File.GetLastWriteTime(fpath)
+                : DateTime.Now;
+
+            _srcRefsMtCache.Add(fpath, lastWrTime);
+
+            return lastWrTime;
+        }
 
         static readonly DateTime utcBaseTime = TimeZoneInfo.ConvertTimeFromUtc(new System.DateTime(1970, 1, 1), TimeZoneInfo.Local);
         static CheckDiffRes checkDiff(string modelID, Dictionary<string, CmdGenerator.CmdInfo> commands)
@@ -4378,35 +4393,14 @@ namespace unify_builder
                         var refList = parseRefFile(refFilePath, modelID)
                             .Where(p => p != cmd.outPath && p != cmd.sourcePath);
 
-                        foreach (var refPath in refList)
+                        foreach (var refpath in refList)
                         {
-                            if (diffCache.ContainsKey(refPath))
-                            {
-                                if (diffCache[refPath])
-                                {
-                                    AddToChangeList(cmd);
-                                    break; // file need recompile, exit
-                                }
-                            }
-                            else // not in cache
-                            {
-                                if (File.Exists(refPath))
-                                {
-                                    DateTime lastWrTime = File.GetLastWriteTime(refPath);
-                                    bool isOutOfDate = DateTime.Compare(lastWrTime, objLastWriteTime) > 0;
-                                    diffCache.Add(refPath, isOutOfDate); // add to cache
+                            var lastModifyTime = getSrcRefLastModifyTime(refpath);
 
-                                    if (isOutOfDate)
-                                    {
-                                        AddToChangeList(cmd);
-                                        break; // out of date, need recompile, exit
-                                    }
-                                }
-                                else // not found ref, ref file need update
-                                {
-                                    AddToChangeList(cmd);
-                                    break; // need recompile, exit
-                                }
+                            if (DateTime.Compare(lastModifyTime, objLastWriteTime) > 0) 
+                            {
+                                AddToChangeList(cmd);
+                                break; // out of date, need recompile, exit
                             }
                         }
                     }
