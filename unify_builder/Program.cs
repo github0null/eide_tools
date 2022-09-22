@@ -272,6 +272,8 @@ namespace unify_builder
             public string outPath;          // [required] output file full path
             public Encoding outputEncoding; // [required] cli encoding, UTF8/GBK/...
 
+            public string srcType;          // [optional] source file type, value: 'c', 'cpp', 'asm'
+
             public string compilerId;       // [optional] [used in compile process] compiler id (lower case), like: 'gcc', 'sdcc'
             public string compilerType;     // [optional] [used in compile process] compiler type, like: 'c', 'asm', 'linker'
 
@@ -395,7 +397,7 @@ namespace unify_builder
                 throw new Exception("Not found cpp compiler model");
 
             if (!((JObject)cModel["groups"]).ContainsKey(linkerName))
-                throw new Exception("Invalid '$use' option!，please check compile option 'linker.$use'");
+                throw new Exception("Invalid '$use' option, please check compile option 'linker.$use'");
 
             models.Add("c", (JObject)cModel["groups"][cCompilerName]);
             models.Add("cpp", (JObject)cModel["groups"][cppCompilerName]);
@@ -420,7 +422,7 @@ namespace unify_builder
             else
             {
                 if (!((JObject)cModel["groups"]).ContainsKey(asmCompilerName))
-                    throw new Exception("Invalid '$use' option!，please check compile option 'asm-compiler.$use'");
+                    throw new Exception("Invalid '$use' option, please check compile option 'asm-compiler.$use'");
 
                 models.Add("asm", (JObject)cModel["groups"][asmCompilerName]);
             }
@@ -1687,6 +1689,7 @@ namespace unify_builder
             }
 
             var buildArgs = new CmdInfo {
+                srcType = modelName,
                 compilerId = getCompilerId().ToLower(),
                 compilerType = modelName,
                 exePath = exeFullPath,
@@ -1695,6 +1698,11 @@ namespace unify_builder
                 outPath = outPath,
                 outputEncoding = encodings[modelName]
             };
+
+            if (modelName.StartsWith("asm"))
+            {
+                buildArgs.srcType = "asm";
+            }
 
             // create cli args for 'compile_commands.json'
             {
@@ -4309,14 +4317,14 @@ namespace unify_builder
         }
 
         static Dictionary<string, DateTime> _srcRefsMtCache = new(512);
-        static DateTime getSrcRefLastModifyTime(string fpath) 
+        static DateTime getSrcRefLastModifyTime(string fpath)
         {
             if (_srcRefsMtCache.ContainsKey(fpath))
             {
                 return _srcRefsMtCache[fpath];
             }
 
-            var lastWrTime = File.Exists(fpath) 
+            var lastWrTime = File.Exists(fpath)
                 ? File.GetLastWriteTime(fpath)
                 : DateTime.Now;
 
@@ -4332,17 +4340,19 @@ namespace unify_builder
 
             Func<CmdGenerator.CmdInfo, bool> AddToChangeList = (cmd) => {
 
-                if (cFileFilter.IsMatch(cmd.sourcePath))
+                switch (cmd.srcType)
                 {
-                    res.cCount++;
-                }
-                else if (cppFileFilter.IsMatch(cmd.sourcePath))
-                {
-                    res.cppCount++;
-                }
-                else if (asmFileFilter.IsMatch(cmd.sourcePath))
-                {
-                    res.asmCount++;
+                    case "c":
+                        res.cCount++;
+                        break;
+                    case "cpp":
+                        res.cppCount++;
+                        break;
+                    case "asm":
+                        res.asmCount++;
+                        break;
+                    default:
+                        break;
                 }
 
                 res.totalCmds.Add(cmd.sourcePath, cmd);
@@ -4378,7 +4388,7 @@ namespace unify_builder
                         AddToChangeList(cmd);
                     }
 
-                    // referance is changed ?
+                    // reference is changed ?
                     else
                     {
                         string refFilePath = Path.GetDirectoryName(cmd.outPath)
@@ -4397,7 +4407,7 @@ namespace unify_builder
                         {
                             var lastModifyTime = getSrcRefLastModifyTime(refpath);
 
-                            if (DateTime.Compare(lastModifyTime, objLastWriteTime) > 0) 
+                            if (DateTime.Compare(lastModifyTime, objLastWriteTime) > 0)
                             {
                                 AddToChangeList(cmd);
                                 break; // out of date, need recompile, exit
@@ -4437,7 +4447,7 @@ namespace unify_builder
                 Path.GetFileName(absPath);
         }
 
-        static Regex whitespaceMatcher = new Regex(@"(?<![\\:]) ", RegexOptions.Compiled);
+        static Regex md_whitespaceMatcher = new Regex(@"(?<![\\:]) ", RegexOptions.Compiled);
 
         static string[] gnu_parseRefLines(string[] lines)
         {
@@ -4455,7 +4465,7 @@ namespace unify_builder
                     else continue; /* line is invalid, skip */
                 }
 
-                string[] subLines = whitespaceMatcher.Split(line);
+                string[] subLines = md_whitespaceMatcher.Split(line);
 
                 foreach (string subLine in subLines)
                 {
