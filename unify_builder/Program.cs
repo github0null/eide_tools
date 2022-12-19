@@ -2698,7 +2698,7 @@ namespace unify_builder
                     warn("\r\nLinker command line (" + Path.GetFileNameWithoutExtension(cmdInf.exePath) + "): \r\n");
                     log(cmdInf.commandLine);
 
-                    warn("\r\nOuput file command line: \r\n");
+                    warn("\r\nOutput file command line: \r\n");
                     CmdGenerator.CmdInfo[] cmdInfoList = cmdGen.genOutputCommand(cmdInf.outPath);
                     foreach (CmdGenerator.CmdInfo info in cmdInfoList)
                     {
