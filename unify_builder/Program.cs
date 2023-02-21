@@ -14,6 +14,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using CommandLine;
 using CommandLine.Text;
+using DotNet.Globbing;
 
 // 有关程序集的一般信息由以下
 // 控制。更改这些特性值可修改
@@ -1992,6 +1993,12 @@ namespace unify_builder
 
     class Program
     {
+        struct UserObjOrderGlob
+        {
+            public Glob pattern;
+            public int order;
+        };
+
         public static readonly int CODE_ERR = 1;
         public static readonly int CODE_DONE = 0;
 
@@ -2018,10 +2025,16 @@ namespace unify_builder
         static Dictionary<Regex, string> ccOutputRender = new();
         static Dictionary<Regex, string> lkOutputRender = new();
 
-        static readonly HashSet<string> cList = new(512);
-        static readonly HashSet<string> cppList = new(512);
-        static readonly HashSet<string> asmList = new(512);
-        static readonly HashSet<string> libList = new(512);
+        static readonly HashSet<string> srcList = new(512);
+        static readonly HashSet<string> libList = new(512); // other '.o' '.a' '.lib' files that in sourceList
+
+        //
+        // object file order
+        //   we will sort obj list for gcc linker 
+        //
+        static readonly int orderNumberBase = 100;
+        static readonly Dictionary<string, int> objOrder = new(512);   // source object file order for linker
+        static readonly List<UserObjOrderGlob> objOrderUsr = new(512); // user pattern for obj order
 
         // compiler params for single source file, Map<absPath, params>
         static readonly Dictionary<string, string> srcParams = new(512);
@@ -2353,6 +2366,20 @@ namespace unify_builder
                 paramsMtime = paramsObj.ContainsKey("sourceParamsMtime") ? paramsObj["sourceParamsMtime"].Value<Int64>() : 0;
                 JObject srcParamsObj = paramsObj.ContainsKey("sourceParams") ? (JObject)paramsObj["sourceParams"] : null;
                 addToSourceList(projectRoot, paramsObj["sourceList"].Values<string>(), srcParamsObj);
+
+                // read user object order
+                if (paramsObj.ContainsKey("objOrder"))
+                {
+                    foreach (JProperty kv in ((JObject)paramsObj["objOrder"]).Properties())
+                    {
+                        var glob = Glob.Parse(kv.Name);
+
+                        objOrderUsr.Add(new UserObjOrderGlob {
+                            pattern = glob,
+                            order = kv.Value<int>(),
+                        });
+                    }
+                }
 
                 // other params
                 modeList.Add(BuilderMode.NORMAL);
@@ -2713,8 +2740,6 @@ namespace unify_builder
                     return CODE_DONE;
                 }
 
-                int cCount = 0, asmCount = 0, cppCount = 0;
-
                 // Check toolchain root folder
                 if (!Directory.Exists(binDir))
                 {
@@ -2729,48 +2754,6 @@ namespace unify_builder
                 catch (Exception e)
                 {
                     throw new Exception("Set Environment Failed !, [path] : \"" + binDir + "\"", e);
-                }
-
-                // check compiler 
-                {
-                    if (cList.Count > 0)
-                    {
-                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("c"));
-
-                        if (!File.Exists(absPath))
-                        {
-                            throw new Exception("Not found 'C Compiler' !, [path]: \"" + absPath + "\"");
-                        }
-                    }
-
-                    if (cppList.Count > 0)
-                    {
-                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("cpp"));
-
-                        if (!File.Exists(absPath))
-                        {
-                            throw new Exception("Not found 'C++ Compiler' !, [path]: \"" + absPath + "\"");
-                        }
-                    }
-
-                    if (asmList.Count > 0)
-                    {
-                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("asm"));
-
-                        if (!File.Exists(absPath))
-                        {
-                            throw new Exception("Not found 'Assembler' !, [path]: \"" + absPath + "\"");
-                        }
-                    }
-
-                    {
-                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("linker"));
-
-                        if (!File.Exists(absPath))
-                        {
-                            throw new Exception("Not found 'Linker' !, [path]: \"" + absPath + "\"");
-                        }
-                    }
                 }
 
                 // switch to project root directory
@@ -2803,6 +2786,13 @@ namespace unify_builder
                     if (string.IsNullOrEmpty(ccArgs.argsForSplitter))
                     {
                         linkerObjs.Add(ccArgs.sourcePath, new() { ccArgs.outPath });
+
+                        var order = orderNumberBase + objOrder.Count;
+
+                        if (objOrder.TryAdd(ccArgs.outPath, order) == false)
+                        {
+                            objOrder[ccArgs.outPath] = order;
+                        }
                     }
 
                     // it's a splitted obj, parse from file
@@ -2814,45 +2804,50 @@ namespace unify_builder
                             }).ToList();
 
                         linkerObjs.Add(ccArgs.sourcePath, objLi);
+
+                        foreach (var _objPath in objLi)
+                        {
+                            var order = orderNumberBase + objOrder.Count;
+
+                            if (objOrder.TryAdd(_objPath, order) == false)
+                            {
+                                objOrder[_objPath] = order;
+                            }
+                        }
                     }
                 };
 
-                foreach (var cFile in cList)
+                int src_count_c = 0;
+                int src_count_cpp = 0;
+                int src_count_asm = 0;
+                int src_count_lib = libList.Count;
+
+                foreach (var srcPath in srcList)
                 {
-                    CmdGenerator.CmdInfo cmdInf = cmdGen.fromCFile(cFile);
+                    CmdGenerator.CmdInfo cmdInf;
+
+                    if (cFileFilter.IsMatch(srcPath))
+                    {
+                        cmdInf = cmdGen.fromCFile(srcPath);
+                        src_count_c++;
+                    }
+                    else if (cppFileFilter.IsMatch(srcPath))
+                    {
+                        cmdInf = cmdGen.fromCppFile(srcPath);
+                        src_count_cpp++;
+                    }
+                    else if (asmFileFilter.IsMatch(srcPath))
+                    {
+                        cmdInf = cmdGen.fromAsmFile(srcPath);
+                        src_count_asm++;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
                     commands.Add(cmdInf.sourcePath, cmdInf);
                     PushLinkerObjs(cmdInf);
-                    cCount++;
-
-                    sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
-                    compilerArgsDataBase.Add(new CompileCommandsDataBaseItem {
-                        file = cmdInf.sourcePath,
-                        directory = projectRoot,
-                        command = cmdInf.shellCommand
-                    });
-                }
-
-                foreach (var asmFile in asmList)
-                {
-                    CmdGenerator.CmdInfo cmdInf = cmdGen.fromAsmFile(asmFile);
-                    commands.Add(cmdInf.sourcePath, cmdInf);
-                    PushLinkerObjs(cmdInf);
-                    asmCount++;
-
-                    sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
-                    compilerArgsDataBase.Add(new CompileCommandsDataBaseItem {
-                        file = cmdInf.sourcePath,
-                        directory = projectRoot,
-                        command = cmdInf.shellCommand
-                    });
-                }
-
-                foreach (var cppFile in cppList)
-                {
-                    CmdGenerator.CmdInfo cmdInf = cmdGen.fromCppFile(cppFile);
-                    commands.Add(cmdInf.sourcePath, cmdInf);
-                    PushLinkerObjs(cmdInf);
-                    cppCount++;
 
                     sourceRefs.Add(cmdInf.sourcePath, cmdInf.outPath);
                     compilerArgsDataBase.Add(new CompileCommandsDataBaseItem {
@@ -2863,9 +2858,51 @@ namespace unify_builder
                 }
 
                 // check source file count
-                if (cCount + cppCount + asmCount == 0)
+                if (src_count_c + src_count_cpp + src_count_asm == 0)
                 {
                     throw new Exception("Not found any source files !, please add some source files !");
+                }
+
+                // check compiler 
+                {
+                    if (src_count_c > 0)
+                    {
+                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("c"));
+
+                        if (!File.Exists(absPath))
+                        {
+                            throw new Exception("Not found 'C Compiler' !, [path]: \"" + absPath + "\"");
+                        }
+                    }
+
+                    if (src_count_cpp > 0)
+                    {
+                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("cpp"));
+
+                        if (!File.Exists(absPath))
+                        {
+                            throw new Exception("Not found 'C++ Compiler' !, [path]: \"" + absPath + "\"");
+                        }
+                    }
+
+                    if (src_count_asm > 0)
+                    {
+                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("asm"));
+
+                        if (!File.Exists(absPath))
+                        {
+                            throw new Exception("Not found 'Assembler' !, [path]: \"" + absPath + "\"");
+                        }
+                    }
+
+                    {
+                        string absPath = replaceEnvVariable(cmdGen.getActivedToolFullPath("linker"));
+
+                        if (!File.Exists(absPath))
+                        {
+                            throw new Exception("Not found 'Linker' !, [path]: \"" + absPath + "\"");
+                        }
+                    }
                 }
 
                 // save compiler database informations
@@ -2883,13 +2920,17 @@ namespace unify_builder
                     // do nothings
                 }
 
+                int src_count_valid_c = 0;
+                int src_count_valid_cpp = 0;
+                int src_count_valid_asm = 0;
+
                 /* use incremental mode */
                 if (checkMode(BuilderMode.FAST))
                 {
                     CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
-                    cCount = res.cCount;
-                    asmCount = res.asmCount;
-                    cppCount = res.cppCount;
+                    src_count_valid_c = res.cCount;
+                    src_count_valid_asm = res.asmCount;
+                    src_count_valid_cpp = res.cppCount;
                     commands = res.totalCmds;
                     infoWithLable("file statistics (incremental compilation mode)\r\n");
                 }
@@ -2900,10 +2941,10 @@ namespace unify_builder
                     infoWithLable("file statistics (rebuild mode)\r\n");
                 }
 
-                int totalFilesCount = (cCount + cppCount + asmCount + libList.Count);
+                int totalFilesCount = (src_count_valid_c + src_count_valid_cpp + src_count_valid_asm + libList.Count);
 
                 string tString = ConsoleTableBuilder
-                    .From(new List<List<object>> { new List<object> { cCount, cppCount, asmCount, libList.Count, totalFilesCount } })
+                    .From(new List<List<object>> { new List<object> { src_count_valid_c, src_count_valid_cpp, src_count_valid_asm, libList.Count, totalFilesCount } })
                     .WithFormat(ConsoleTableBuilderFormat.Alternative)
                     .WithColumn(new List<string> { "C Files", "Cpp Files", "Asm Files", "Lib Files", "Totals" })
                     .Export()
@@ -3037,7 +3078,36 @@ namespace unify_builder
                     }
                 }
 
-                var allObjs = linkerObjs.SelectMany(kv => kv.Value, (kv, item) => item).ToList();
+                var allObjs = linkerObjs
+                    .SelectMany(kv => kv.Value, (kv, item) => item)
+                    .ToList();
+
+                // apply user obj order
+                foreach (var orderInf in objOrderUsr)
+                {
+                    foreach (var objPath in allObjs)
+                    {
+                        if (orderInf.pattern.IsMatch(objPath))
+                        {
+                            if (objOrder.ContainsKey(objPath))
+                            {
+                                objOrder[objPath] = orderInf.order;
+                            }
+                            else
+                            {
+                                objOrder.Add(objPath, orderInf.order);
+                            }
+                        }
+                    }
+                }
+
+                // sort objs by objOrder
+                allObjs.Sort((p1, p2) => {
+                    int order_1 = objOrder.ContainsKey(p1) ? objOrder[p1] : Int32.MaxValue;
+                    int order_2 = objOrder.ContainsKey(p2) ? objOrder[p2] : Int32.MaxValue;
+                    return order_1 - order_2;
+                });
+
                 CmdGenerator.CmdInfo linkInfo = cmdGen.genLinkCommand(allObjs);
 
                 int linkerExitCode = runExe(linkInfo.exePath, linkInfo.commandLine, out string linkerOut, linkInfo.outputEncoding);
@@ -4574,27 +4644,20 @@ namespace unify_builder
             foreach (string repath in sourceList)
             {
                 string sourcePath = Utility.isAbsolutePath(repath)
-                    ? repath : (rootDir + Path.DirectorySeparatorChar + repath);
+                    ? (repath)
+                    : (rootDir + Path.DirectorySeparatorChar + repath);
 
-                FileInfo file = new FileInfo(sourcePath);
+                FileInfo file = new(sourcePath);
 
                 if (file.Exists)
                 {
-                    if (cFileFilter.IsMatch(file.Name))
-                    {
-                        cList.Add(file.FullName);
-                    }
-                    else if (cppFileFilter.IsMatch(file.Name))
-                    {
-                        cppList.Add(file.FullName);
-                    }
-                    else if (asmFileFilter.IsMatch(file.Name))
-                    {
-                        asmList.Add(file.FullName);
-                    }
-                    else if (libFileFilter.IsMatch(file.Name))
+                    if (libFileFilter.IsMatch(file.Name))
                     {
                         libList.Add(file.FullName);
+                    }
+                    else
+                    {
+                        srcList.Add(file.FullName);
                     }
                 }
 
