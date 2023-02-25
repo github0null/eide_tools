@@ -126,6 +126,9 @@ namespace SerialPortMonitor
                 cliArgs = parserResult.Value;
             }
 
+            if (cliArgs == null)
+                return;
+
             if (cliArgs.UnixCRLF) CRLF = "\n";
 
             try
