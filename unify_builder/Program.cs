@@ -1993,12 +1993,6 @@ namespace unify_builder
 
     class Program
     {
-        struct UserObjOrderGlob
-        {
-            public Glob pattern;
-            public int order;
-        };
-
         public static readonly int CODE_ERR = 1;
         public static readonly int CODE_DONE = 0;
 
@@ -2025,7 +2019,7 @@ namespace unify_builder
         static Dictionary<Regex, string> ccOutputRender = new();
         static Dictionary<Regex, string> lkOutputRender = new();
 
-        static readonly HashSet<string> srcList = new(512);
+        static readonly HashSet<string> srcList = new(512); // @note this path list use local path sep
         static readonly HashSet<string> libList = new(512); // other '.o' '.a' '.lib' files that in sourceList
 
         //
@@ -2108,6 +2102,12 @@ namespace unify_builder
             // It can be used to distinguish different processing modes of the same input file.
             //public string output;
         }
+
+        struct UserObjOrderGlob
+        {
+            public Glob pattern;
+            public int order;
+        };
 
         /**
          * command format: 
@@ -2371,20 +2371,6 @@ namespace unify_builder
                 JObject srcParamsObj = paramsObj.ContainsKey("sourceParams") ? (JObject)paramsObj["sourceParams"] : null;
                 addToSourceList(projectRoot, paramsObj["sourceList"].Values<string>(), srcParamsObj);
 
-                // read user object order
-                if (paramsObj.ContainsKey("objOrder"))
-                {
-                    foreach (JProperty kv in ((JObject)paramsObj["objOrder"]).Properties())
-                    {
-                        var glob = Glob.Parse(kv.Name);
-
-                        objOrderUsr.Add(new UserObjOrderGlob {
-                            pattern = glob,
-                            order = kv.Value<int>(),
-                        });
-                    }
-                }
-
                 // other params
                 modeList.Add(BuilderMode.NORMAL);
                 reqThreadsNum = paramsObj.ContainsKey("threadNum") ? paramsObj["threadNum"].Value<int>() : 0;
@@ -2416,7 +2402,49 @@ namespace unify_builder
                         }
                         catch (Exception)
                         {
-                            warn("\r\nInvalid mode option '" + modeStr + "', ignore it !");
+                            warn("\r\nInvalid mode option '" + modeStr + "', ignore it !\r\n");
+                        }
+                    }
+                }
+
+                // load user object order
+                if (paramsObj.ContainsKey("options") && 
+                    (paramsObj["options"] as JObject).ContainsKey("linker") &&
+                    (paramsObj["options"]["linker"] as JObject).ContainsKey("object-order") &&
+                    (paramsObj["options"]["linker"]["object-order"] is JArray objOrderList))
+                {
+                    foreach (JObject item in objOrderList)
+                    {
+                        try
+                        {
+                            var pattern = item["pattern"].Value<string>();
+
+                            if (string.IsNullOrEmpty(pattern))
+                                continue;
+
+                            var order = 0;
+
+                            switch (item["order"].Type)
+                            {
+                                case JTokenType.String:
+                                    order = int.Parse(item["order"].Value<string>());
+                                    break;
+                                case JTokenType.Integer:
+                                    order = item["order"].Value<int>();
+                                    break;
+                                default:
+                                    throw new Exception("invalid type, 'order' type is: " + item["order"].Type.ToString());
+                            }
+
+                            objOrderUsr.Add(new UserObjOrderGlob {
+                                pattern = Glob.Parse(pattern.Trim()),
+                                order = order,
+                            });
+                        }
+                        catch (Exception)
+                        {
+                            var json_str = JsonConvert.SerializeObject(item);
+                            warn("\r\nIgnored invalid 'objOrder' item: " + json_str + "\r\n");
                         }
                     }
                 }
@@ -2486,7 +2514,7 @@ namespace unify_builder
                         if (!Regex.IsMatch(envName, @"^[\w\$]+$") ||
                             envName.ToLower() == "path")
                         {
-                            warn(string.Format("ignore incorrect env: '{0}'", envName));
+                            warn(string.Format("\r\nignore incorrect env: '{0}'\r\n", envName));
                             continue;
                         }
 
@@ -2932,18 +2960,14 @@ namespace unify_builder
                     // do nothings
                 }
 
-                int recompile_src_count_c = 0;
-                int recompile_src_count_cpp = 0;
-                int recompile_src_count_asm = 0;
-
                 /* use incremental mode */
                 if (checkMode(BuilderMode.FAST))
                 {
                     CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
-                    recompile_src_count_c = res.cCount;
-                    recompile_src_count_asm = res.asmCount;
-                    recompile_src_count_cpp = res.cppCount;
-                    commands = res.totalCmds;
+                    src_count_c   = res.cCount;
+                    src_count_cpp = res.cppCount;
+                    src_count_asm = res.asmCount;
+                    commands      = res.totalCmds;
                     infoWithLable("file statistics (incremental mode)\r\n");
                 }
 
@@ -2953,10 +2977,10 @@ namespace unify_builder
                     infoWithLable("file statistics (rebuild mode)\r\n");
                 }
 
-                int totalFilesCount = (recompile_src_count_c + recompile_src_count_cpp + recompile_src_count_asm + libList.Count);
+                int totalFilesCount = (src_count_c + src_count_cpp + src_count_asm + libList.Count);
 
                 string tString = ConsoleTableBuilder
-                    .From(new List<List<object>> { new List<object> { recompile_src_count_c, recompile_src_count_cpp, recompile_src_count_asm, libList.Count, totalFilesCount } })
+                    .From(new List<List<object>> { new List<object> { src_count_c, src_count_cpp, src_count_asm, libList.Count, totalFilesCount } })
                     .WithFormat(ConsoleTableBuilderFormat.Alternative)
                     .WithColumn(new List<string> { "C Files", "Cpp Files", "Asm Files", "Lib/Obj Files", "Totals" })
                     .Export()
@@ -3099,7 +3123,9 @@ namespace unify_builder
                 {
                     foreach (var objPath in allObjs)
                     {
-                        if (orderInf.pattern.IsMatch(objPath))
+                        var repath = Utility.toRelativePath(projectRoot, objPath, true) ?? Utility.toUnixPath(objPath);
+
+                        if (orderInf.pattern.IsMatch(repath))
                         {
                             if (objOrder.ContainsKey(objPath))
                             {
