@@ -2069,7 +2069,7 @@ namespace unify_builder
         static bool showRelativePathOnLog = false;
         static bool colorRendererEnabled = true;
 
-        static HashSet<BuilderMode> modeList = new HashSet<BuilderMode>();
+        static HashSet<BuilderMode> modeList = new();
 
         enum BuilderMode
         {
@@ -2125,6 +2125,7 @@ namespace unify_builder
          *      -p <paramsFile>         builder params file path
          *      -no-color               close color for output
          *      -force-color            force apply color for output
+         *      -only-dump-args         only print compiler args
          */
 
         public class Options
@@ -2146,6 +2147,9 @@ namespace unify_builder
 
             [Option("rebuild", Required = false, HelpText = "force rebuild project")]
             public bool ForceRebuild { get; set; }
+
+            [Option("only-dump-args", Required = false, HelpText = "only print compiler args")]
+            public bool OnlyDumpArgs { get; set; }
         }
 
         // linux VT100 color
@@ -2408,15 +2412,23 @@ namespace unify_builder
                     {
                         try
                         {
-                            var mod = (BuilderMode)Enum.Parse(typeof(BuilderMode), modeStr.ToUpper());
-                            if (cliArgs.ForceRebuild && mod == BuilderMode.FAST) continue;
-                            modeList.Add(mod);
+                            modeList.Add((BuilderMode)Enum.Parse(typeof(BuilderMode), modeStr.ToUpper()));
                         }
                         catch (Exception)
                         {
                             warn("\r\nInvalid mode option '" + modeStr + "', ignore it !");
                         }
                     }
+                }
+
+                if (cliArgs.ForceRebuild)
+                {
+                    modeList.Remove(BuilderMode.FAST);
+                }
+
+                if (cliArgs.OnlyDumpArgs)
+                {
+                    modeList.Add(BuilderMode.DEBUG);
                 }
             }
             catch (Exception err)
@@ -2817,7 +2829,7 @@ namespace unify_builder
                     }
                 };
 
-                int src_count_c   = 0;
+                int src_count_c = 0;
                 int src_count_cpp = 0;
                 int src_count_asm = 0;
                 int src_count_lib = libList.Count;
@@ -2920,7 +2932,7 @@ namespace unify_builder
                     // do nothings
                 }
 
-                int recompile_src_count_c   = 0;
+                int recompile_src_count_c = 0;
                 int recompile_src_count_cpp = 0;
                 int recompile_src_count_asm = 0;
 
@@ -2928,7 +2940,7 @@ namespace unify_builder
                 if (checkMode(BuilderMode.FAST))
                 {
                     CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
-                    recompile_src_count_c   = res.cCount;
+                    recompile_src_count_c = res.cCount;
                     recompile_src_count_asm = res.asmCount;
                     recompile_src_count_cpp = res.cppCount;
                     commands = res.totalCmds;
