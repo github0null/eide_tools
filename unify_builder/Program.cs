@@ -2817,7 +2817,7 @@ namespace unify_builder
                     }
                 };
 
-                int src_count_c = 0;
+                int src_count_c   = 0;
                 int src_count_cpp = 0;
                 int src_count_asm = 0;
                 int src_count_lib = libList.Count;
@@ -2920,19 +2920,19 @@ namespace unify_builder
                     // do nothings
                 }
 
-                int src_count_valid_c = 0;
-                int src_count_valid_cpp = 0;
-                int src_count_valid_asm = 0;
+                int recompile_src_count_c   = 0;
+                int recompile_src_count_cpp = 0;
+                int recompile_src_count_asm = 0;
 
                 /* use incremental mode */
                 if (checkMode(BuilderMode.FAST))
                 {
                     CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
-                    src_count_valid_c = res.cCount;
-                    src_count_valid_asm = res.asmCount;
-                    src_count_valid_cpp = res.cppCount;
+                    recompile_src_count_c   = res.cCount;
+                    recompile_src_count_asm = res.asmCount;
+                    recompile_src_count_cpp = res.cppCount;
                     commands = res.totalCmds;
-                    infoWithLable("file statistics (incremental compilation mode)\r\n");
+                    infoWithLable("file statistics (incremental mode)\r\n");
                 }
 
                 /* rebuild mode */
@@ -2941,12 +2941,12 @@ namespace unify_builder
                     infoWithLable("file statistics (rebuild mode)\r\n");
                 }
 
-                int totalFilesCount = (src_count_valid_c + src_count_valid_cpp + src_count_valid_asm + libList.Count);
+                int totalFilesCount = (recompile_src_count_c + recompile_src_count_cpp + recompile_src_count_asm + libList.Count);
 
                 string tString = ConsoleTableBuilder
-                    .From(new List<List<object>> { new List<object> { src_count_valid_c, src_count_valid_cpp, src_count_valid_asm, libList.Count, totalFilesCount } })
+                    .From(new List<List<object>> { new List<object> { recompile_src_count_c, recompile_src_count_cpp, recompile_src_count_asm, libList.Count, totalFilesCount } })
                     .WithFormat(ConsoleTableBuilderFormat.Alternative)
-                    .WithColumn(new List<string> { "C Files", "Cpp Files", "Asm Files", "Lib Files", "Totals" })
+                    .WithColumn(new List<string> { "C Files", "Cpp Files", "Asm Files", "Lib/Obj Files", "Totals" })
                     .Export()
                     //.Insert(0, "   ").Replace("\n", "\n   ")
                     .ToString();
