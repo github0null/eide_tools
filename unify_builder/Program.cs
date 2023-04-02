@@ -576,7 +576,7 @@ namespace unify_builder
                 {
                     if (paramObj["global"].ContainsKey("$one-module-per-function"))
                     {
-                        compilerAttr_sdcc_module_split = paramObj["global"]["$one-module-per-function"].Value<bool>();
+                        compilerAttr_sdcc_module_split = false; // @disabled paramObj["global"]["$one-module-per-function"].Value<bool>();
                     }
 
                     // check sdcc version, must > v4.x.x
@@ -1444,8 +1444,8 @@ namespace unify_builder
             return result;
         }
 
-        private readonly Regex compilerOpts_overrideExprMatcher = new(@"\$<override:(.+)>", RegexOptions.Compiled);
-        private readonly Regex compilerOpts_replaceExprMatcher = new(@"\$<replace:(?<old>.+?)/(?<new>.+?)>", RegexOptions.Compiled);
+        private readonly Regex compilerOpts_overrideExprMatcher = new(@"\$<override:(.+?)>", RegexOptions.Compiled);
+        private readonly Regex compilerOpts_replaceExprMatcher = new(@"\$<replace:(?<old>.+?)/(?<new>.*?)>", RegexOptions.Compiled);
 
         private CmdInfo fromModel(string modelName, string langName, string fpath, bool onlyCmd = false)
         {
@@ -1552,13 +1552,24 @@ namespace unify_builder
                 //      override global user options if we need;
                 //      otherwise, concat user options and source options
                 {
-                    var mRes = compilerOpts_overrideExprMatcher.Match(srcOpts);
+                    var overrided = false;
 
-                    if (mRes.Success && mRes.Groups.Count > 1)
+                    while (true)
                     {
-                        srcOpts = mRes.Groups[1].Value.Trim();
+                        var mRes = compilerOpts_overrideExprMatcher.Match(srcOpts);
+
+                        if (mRes.Success && mRes.Groups.Count > 1)
+                        {
+                            srcOpts   = mRes.Groups[1].Value.Trim();
+                            overrided = true;
+                        }
+                        else
+                        {
+                            break;
+                        }
                     }
-                    else
+
+                    if (!overrided)
                     {
                         compiler_cmds.AddRange(userOpts[modelName]);
                     }
@@ -1566,14 +1577,20 @@ namespace unify_builder
 
                 // replace expr:
                 //      replace some matched options to other
+                while (true)
                 {
                     var mRes = compilerOpts_replaceExprMatcher.Match(srcOpts);
-                    if (mRes.Success && mRes.Groups.Count > 2)
+
+                    if (mRes.Success && mRes.Groups.Count > 1)
                     {
                         var oldVal = mRes.Groups["old"].Value.Trim();
-                        var newVal = mRes.Groups["new"].Value.Trim();
+                        var newVal = "";
 
-                        // del expr-self
+                        if (mRes.Groups.ContainsKey("new")) {
+                            newVal = mRes.Groups["new"].Value.Trim();
+                        }
+
+                        // delete expression self
                         srcOpts = srcOpts.Remove(mRes.Groups[0].Index, mRes.Groups[0].Length);
 
                         if (!string.IsNullOrEmpty(oldVal))
@@ -1583,6 +1600,10 @@ namespace unify_builder
                                 compiler_cmds[i] = compiler_cmds[i].Replace(oldVal, newVal);
                             }
                         }
+                    }
+                    else
+                    {
+                        break;
                     }
                 }
 
@@ -2555,15 +2576,15 @@ namespace unify_builder
                         case "keil_c51":
                             {
                                 /* compiler */
-                                ccOutputRender.Add(new Regex(@"((?:\swarning\s|^warning\s)(?:[A-Z][0-9]+)(?::\s.+)?)",
+                                ccOutputRender.Add(new Regex(@"(\bwarning\s[A-Z][0-9]+(?::\s.+)?)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
-                                ccOutputRender.Add(new Regex(@"((?:\serror\s|^error\s)(?:[A-Z][0-9]+)(?::\s.+)?)",
+                                ccOutputRender.Add(new Regex(@"(\berror\s[A-Z][0-9]+(?::\s.+)?)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
 
                                 /* linker */
-                                lkOutputRender.Add(new Regex(@"((?:\swarning\s|^warning\s)(?:[A-Z][0-9]+)(?::\s.+)?)",
+                                lkOutputRender.Add(new Regex(@"(\bwarning\s[A-Z][0-9]+(?::\s.+)?)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
-                                lkOutputRender.Add(new Regex(@"((?:\serror\s|^error\s)(?:[A-Z][0-9]+)(?::\s.+)?)",
+                                lkOutputRender.Add(new Regex(@"(\berror\s[A-Z][0-9]+(?::\s.+)?)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
                             }
                             break;
@@ -2592,9 +2613,9 @@ namespace unify_builder
                         case "iar_arm":
                             {
                                 /* compiler */
-                                ccOutputRender.Add(new Regex(@"(\swarning\[\w+\]:\s|^warning\[\w+\]:\s)",
+                                ccOutputRender.Add(new Regex(@"\b(warning\[\w+\]:\s)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
-                                ccOutputRender.Add(new Regex(@"(\serror\[\w+\]:\s|^error\[\w+\]:\s)",
+                                ccOutputRender.Add(new Regex(@"\b(error\[\w+\]:\s)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
                                 // cc hint msg
                                 ccOutputRender.Add(new Regex(@"^([\^~\s]*\^[\^~\s]*)$",
@@ -2605,9 +2626,9 @@ namespace unify_builder
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), HINT_RENDER);
 
                                 /* linker */
-                                lkOutputRender.Add(new Regex(@"(\swarning\[\w+\]:\s|^warning\[\w+\]:\s)",
+                                lkOutputRender.Add(new Regex(@"\b(warning\[\w+\]:\s)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
-                                lkOutputRender.Add(new Regex(@"(\serror\[\w+\]:\s|^error\[\w+\]:\s)",
+                                lkOutputRender.Add(new Regex(@"\b(error\[\w+\]:\s)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
                             }
                             break;
@@ -2616,11 +2637,11 @@ namespace unify_builder
                             {
                                 /* common */
                                 {
-                                    ccOutputRender.Add(new Regex(@"(\swarning:\s|^warning:\s)",
+                                    ccOutputRender.Add(new Regex(@"\b(warning:\s)",
                                         RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
-                                    ccOutputRender.Add(new Regex(@"(\serror:\s|^error:\s)",
+                                    ccOutputRender.Add(new Regex(@"\b(error:\s)",
                                         RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
-                                    ccOutputRender.Add(new Regex(@"(\snote:\s|^note:\s)",
+                                    ccOutputRender.Add(new Regex(@"\b(note:\s)",
                                         RegexOptions.IgnoreCase | RegexOptions.Compiled), NOTE_RENDER);
                                     // hint msg
                                     ccOutputRender.Add(new Regex(@"^([\^~\s]*\^[\^~\s]*)$",
@@ -2641,10 +2662,12 @@ namespace unify_builder
                                         RegexOptions.IgnoreCase | RegexOptions.Compiled), NOTE_RENDER);
 
                                     /* linker */
-                                    lkOutputRender.Add(new Regex(@"(\swarning:\s|^warning:\s)",
+                                    lkOutputRender.Add(new Regex(@"\b(warning:\s)",
                                         RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
-                                    lkOutputRender.Add(new Regex(@"(\serror:\s|^error:\s)",
+                                    lkOutputRender.Add(new Regex(@"\b(error:\s)",
                                         RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
+                                    lkOutputRender.Add(new Regex(@"\b(note:\s)",
+                                        RegexOptions.IgnoreCase | RegexOptions.Compiled), NOTE_RENDER);
                                     lkOutputRender.Add(new Regex(@"\b(cannot open linker script file)\b",
                                         RegexOptions.Compiled), ERRO_RENDER);
                                     lkOutputRender.Add(new Regex(@"\b(undefined reference to `[^']+')",
@@ -2655,6 +2678,10 @@ namespace unify_builder
                                         RegexOptions.Compiled), ERRO_RENDER);
                                     lkOutputRender.Add(new Regex(@"\b(region `[^']+' overflowed by \w+ bytes)",
                                         RegexOptions.Compiled), HINT_RENDER);
+                                    lkOutputRender.Add(new Regex(@"\b(region \w+ overflowed with \w+)",
+                                        RegexOptions.Compiled), HINT_RENDER);
+                                    lkOutputRender.Add(new Regex(@"(\[\-w[\w\-=]+\])",
+                                        RegexOptions.IgnoreCase | RegexOptions.Compiled), HINT_RENDER);
                                 }
 
                                 /* for ac5/ac6 */
