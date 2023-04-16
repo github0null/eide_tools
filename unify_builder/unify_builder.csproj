@@ -7,10 +7,10 @@
     <Nullable>disable</Nullable>
     <Authors>em-ide.com</Authors>
     <Description>unify code builder for embedded ide</Description>
-    <Copyright>Copyright @ em-ide.com 2022 all right reserved</Copyright>
+    <Copyright>Copyright @ em-ide.com 2023 all right reserved</Copyright>
     <Company>em-ide.com</Company>
     <ErrorReport>none</ErrorReport>
-    <Version>3.6.3</Version>
+    <Version>3.7.0</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">

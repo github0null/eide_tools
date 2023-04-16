@@ -310,7 +310,7 @@ namespace unify_builder
         class InvokeFormat
         {
             public bool useFile = false;
-            public string body = null;
+            public string body = "${value}";
         };
 
         public static readonly string optionKey = "options";
@@ -379,17 +379,10 @@ namespace unify_builder
             paramObj.Add("asm", compileOptions.ContainsKey("asm-compiler") ? (JObject)compileOptions["asm-compiler"] : new JObject());
             paramObj.Add("linker", compileOptions.ContainsKey("linker") ? (JObject)compileOptions["linker"] : new JObject());
 
-            var GetRealToolName = delegate (Dictionary<string, JObject> userParamsObj, string modName) {
-                if (!userParamsObj[modName].ContainsKey("$use")) return modName;
-                var name = userParamsObj[modName]["$use"].Value<string>();
-                if (string.IsNullOrWhiteSpace(name) || name.StartsWith(modName + "-") || name == modName) return name;
-                return modName + '-' + name;
-            };
-
             // init compiler models
             string cCompilerName = ((JObject)cModel["groups"]).ContainsKey("c/cpp") ? "c/cpp" : "c";
             string cppCompilerName = ((JObject)cModel["groups"]).ContainsKey("c/cpp") ? "c/cpp" : "cpp";
-            string linkerName = GetRealToolName(paramObj, "linker");
+            string linkerName = getUserSpecifiedModelName("linker");
 
             if (!((JObject)cModel["groups"]).ContainsKey(cCompilerName))
                 throw new Exception("Not found c compiler model");
@@ -405,7 +398,7 @@ namespace unify_builder
             models.Add("linker", (JObject)cModel["groups"][linkerName]);
 
             // init asm compiler models and params
-            asmCompilerName = GetRealToolName(paramObj, "asm");
+            asmCompilerName = getUserSpecifiedModelName("asm");
 
             if (asmCompilerName == "asm-auto")
             {
@@ -527,7 +520,11 @@ namespace unify_builder
                         int eCode = Program.runExe(exePath, vMatcher["args"].Value<string>(), out string output);
 
                         // ignore exit code for keil_c51 compiler
-                        if (this.getCompilerId() == "KEIL_C51") eCode = Program.CODE_DONE;
+                        if (getCompilerId() == "KEIL_C51" ||
+                            getCompilerId() == "COSMIC_STM8")
+                        {
+                            eCode = Program.CODE_DONE;
+                        }
 
                         if (eCode == Program.CODE_DONE && !String.IsNullOrWhiteSpace(output))
                         {
@@ -639,8 +636,14 @@ namespace unify_builder
                 }
                 formats.Add(modelName, properties);
 
-                // invoke mode
-                InvokeFormat invokeFormat = modelParams["$invoke"].ToObject<InvokeFormat>();
+                // invoker mode
+                InvokeFormat invokeFormat;
+
+                if (modelParams.ContainsKey("$invoke"))
+                    invokeFormat = modelParams["$invoke"].ToObject<InvokeFormat>();
+                else
+                    invokeFormat = new InvokeFormat();
+
                 if (option.testMode) invokeFormat.useFile = false;
                 invokeFormats.Add(modelName, invokeFormat);
             }
@@ -868,7 +871,23 @@ namespace unify_builder
                 ? getCommandValue((JObject)linkerModel["$LIB_FLAGS"], Utility.getJObjectVal(linkerParams["LIB_FLAGS"])) : "";
         }
 
-        public CmdInfo genLinkCommand(List<string> objList, bool cliTestMode = false)
+        public string getUserSpecifiedModelName(string modelName)
+        {
+            if (!paramObj[modelName].ContainsKey("$use")) 
+                return modelName;
+
+            var name = paramObj[modelName]["$use"].Value<string>();
+
+            if (string.IsNullOrWhiteSpace(name))
+                return modelName;
+
+            if (name.StartsWith(modelName + "-") || name == modelName) 
+                return name;
+            
+            return modelName + '-' + name;
+        }
+
+        public CmdInfo genLinkCommand(string[] objList, bool cliTestMode = false)
         {
             JObject linkerModel = models["linker"];
             JObject linkerParams = paramObj["linker"];
@@ -903,6 +922,7 @@ namespace unify_builder
             // cmd: sdar -rcv ${out} ${in}
             if (!cliTestMode && compilerId == "SDCC" && checkEntryOrderForSdcc)
             {
+                List<string> sourcesObjs = new(objList);
                 List<string> finalObjsLi = new(128); // must be absolute path
                 List<string> bundledList = new(128); // must be relative path
 
@@ -911,14 +931,12 @@ namespace unify_builder
                     string mainName = linkerParams.ContainsKey("$mainFileName")
                         ? linkerParams["$mainFileName"].Value<string>() : "main";
 
-                    int index = objList.FindIndex((string fName) => {
-                        return Path.GetFileNameWithoutExtension(fName).Equals(mainName);
-                    });
+                    int index = sourcesObjs.FindIndex((string fName) => Path.GetFileNameWithoutExtension(fName).Equals(mainName));
 
                     if (index != -1)
                     {
-                        finalObjsLi.Add(objList[index]);
-                        objList.RemoveAt(index);
+                        finalObjsLi.Add(sourcesObjs[index]);
+                        sourcesObjs.RemoveAt(index);
                     }
                     else
                     {
@@ -929,7 +947,7 @@ namespace unify_builder
                 }
 
                 // split objs
-                foreach (string objPath in objList)
+                foreach (string objPath in sourcesObjs)
                 {
                     if (objPath.EndsWith(".lib") || objPath.EndsWith(".a"))
                         finalObjsLi.Add(objPath);
@@ -965,7 +983,7 @@ namespace unify_builder
                 }
 
                 // set real obj list
-                objList = finalObjsLi;
+                objList = finalObjsLi.ToArray();
             }
 
             //--
@@ -987,7 +1005,7 @@ namespace unify_builder
                 }
             }
 
-            for (int i = 0; i < objList.Count; i++)
+            for (int i = 0; i < objList.Length; i++)
             {
                 objList[i] = toRelativePathForCompilerArgs(objList[i]);
             }
@@ -1018,25 +1036,144 @@ namespace unify_builder
             string reOutDir = toRelativePathForCompilerArgs(outDir, false, false);
             cmdLine = cmdLine
                 .Replace("${OutName}", outElfName)
-                .Replace("${OutDir}", reOutDir);
+                .Replace("${OutDir}", reOutDir)
+                .Replace("${outName}", outElfName)
+                .Replace("${outDir}", reOutDir);
 
             // replace system env
             cmdLine = Program.replaceEnvVariable(cmdLine);
 
+            // ---
+            // For COSMIC STM8 clnk
+            //  - We need put all objs into *.lkf files
+            if (compilerId == "COSMIC_STM8" && 
+                getUserSpecifiedModelName("linker") == "linker")
+            {
+                string usrLkfPath = null;
+
+                if (linkerParams.ContainsKey("linker-script"))
+                {
+                    var jobj = linkerParams["linker-script"];
+
+                    if (jobj.Type == JTokenType.Array)
+                    {
+                        var arr = jobj.Values<string>().ToArray();
+
+                        if (arr.Length > 0)
+                        {
+                            usrLkfPath = arr[0];
+                        }
+                    }
+                    else
+                    {
+                        usrLkfPath = jobj.Value<string>();
+                    }
+                }
+                else if (linkerParams.ContainsKey("$lkfPath"))
+                {
+                    usrLkfPath = linkerParams["$lkfPath"].Value<string>();
+                }
+
+                if (string.IsNullOrEmpty(usrLkfPath))
+                {
+                    throw new Exception("Missing *.lkf file for COSMIC linker(clnk)");
+                }
+
+                string outLkfPath = outDir + Path.DirectorySeparatorChar + Path.GetFileNameWithoutExtension(usrLkfPath) + ".lkf";
+
+                List<string> lkfLines = new(512);
+                List<string> objFiles = new(objList);
+                List<string> libFiles = new(new Regex(@"\s+").Split(lib_flags));
+
+                // setup lib search path
+                //  set CXLIB=C:\COSMIC\LIB
+                Program.setEnvVariable("CXLIB", binDir + Path.DirectorySeparatorChar + "Lib");
+
+                lkfLines.AddRange(new string[] {
+                    "############################################",
+                    "# Auto generated by EIDE (unify_builder)   #",
+                    "############################################",
+                    ""
+                });
+
+                // replace vars in lkf files:
+                //  $<objs:pattern>
+                //  $<libs:pattern>
+                Regex patternMatcher = new(@"\$<(?<name>\w+)\:(?<glob>.*?)>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+                foreach (var input_ in File.ReadAllLines(usrLkfPath))
+                {
+                    string input = Program.replaceEnvVariable(input_);
+
+                    while (true)
+                    {
+                        var m = patternMatcher.Match(input);
+
+                        if (m.Success && m.Groups.Count > 2)
+                        {
+                            List<string> sources;
+
+                            switch (m.Groups["name"].Value)
+                            {
+                                case "objs":
+                                    sources = objFiles;
+                                    break;
+                                case "libs":
+                                    sources = libFiles;
+                                    break;
+                                default:
+                                    throw new Exception("Not support this pattern in lkf, pattern class: '" + m.Groups["name"].Value + "'");
+                            }
+
+                            List<string> results = new(128);
+
+                            if (!string.IsNullOrEmpty(m.Groups["glob"].Value))
+                            {
+                                Glob filePattern = Glob.Parse(m.Groups["glob"].Value);
+
+                                List<string> rmList = new(128);
+
+                                foreach (var filepath in sources)
+                                {
+                                    if (filePattern.IsMatch(filepath.Replace("\"", "")))
+                                    {
+                                        results.Add(filepath);
+                                        rmList.Add(filepath);
+                                    }
+                                }
+
+                                sources.RemoveAll((p) => rmList.Contains(p));
+                            }
+
+                            // expand value
+                            input = input.Replace(
+                                m.Groups[0].Value,
+                                string.Join(OsInfo.instance().CRLF, results));
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+
+                    lkfLines.Add(input);
+                }
+
+                File.WriteAllLines(outLkfPath, lkfLines);
+
+                cmdLine += " " + toRelativePathForCompilerArgs(outLkfPath);
+            }
+
             //--
+
+            FileInfo paramFile = new(outName + ".lnp");
+            File.WriteAllText(paramFile.FullName, cmdLine, encodings["linker"]);
 
             string commandLine = null;
 
-            if (iFormat.useFile && !cliTestMode)
-            {
-                FileInfo paramFile = new FileInfo(outName + ".lnp");
-                File.WriteAllText(paramFile.FullName, cmdLine, encodings["linker"]);
+            if (iFormat.useFile)
                 commandLine = iFormat.body.Replace("${value}", "\"" + paramFile.FullName + "\"");
-            }
             else
-            {
                 commandLine = cmdLine;
-            }
 
             // rename old map file
             if (File.Exists(mapPath))
@@ -1104,7 +1241,7 @@ namespace unify_builder
                     .Replace("${output}", toRelativePathForCompilerArgs(outFilePath));
 
                 // replace system env
-                command = Program.replaceEnvVariable(command);
+                command = Program.replaceEnvVariable(command, true);
 
                 commandsList.Add(new CmdInfo {
                     title = outputModel["name"].Value<string>(),
@@ -1136,7 +1273,7 @@ namespace unify_builder
                     .Replace("${linkerOutput}", toRelativePathForCompilerArgs(linkerOutputFile));
 
                 // replace system env
-                command = Program.replaceEnvVariable(command);
+                command = Program.replaceEnvVariable(command, true);
 
                 commandList.Add(new LinkerExCmdInfo {
                     title = model.ContainsKey("name") ? model["name"].Value<string>() : exePath,
@@ -1689,7 +1826,11 @@ namespace unify_builder
                         .Replace("${OutName}", fOutNam)
                         .Replace("${OutDir}", reOutDir)
                         .Replace("${FileName}", srcName)
-                        .Replace("${FileDir}", reSrcDir);
+                        .Replace("${FileDir}", reSrcDir)
+                        .Replace("${outName}", fOutNam)
+                        .Replace("${outDir}", reOutDir)
+                        .Replace("${fileName}", srcName)
+                        .Replace("${fileDir}", reSrcDir);
 
                     commands[i] = Program.replaceEnvVariable(commands[i]);
                 }
@@ -2025,7 +2166,7 @@ namespace unify_builder
         // file filters
         static readonly Regex cFileFilter = new Regex(@"\.c$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         static readonly Regex asmFileFilter = new Regex(@"\.(?:s|asm|a51)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-        static readonly Regex libFileFilter = new Regex(@"\.(?:lib|a|o|obj)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        static readonly Regex libFileFilter = new Regex(@"\.(?:lib|a|o|obj|sm8)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         static readonly Regex cppFileFilter = new Regex(@"\.(?:cpp|cxx|cc|c\+\+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         // string matcher
@@ -2563,7 +2704,11 @@ namespace unify_builder
                 });
 
                 // ingnore keil c51 normal output
-                enableNormalOut = cmdGen.getCompilerId() != "KEIL_C51";
+                if (cmdGen.getCompilerId() == "KEIL_C51" ||
+                    cmdGen.getCompilerId() == "COSMIC_STM8")
+                {
+                    enableNormalOut = false;
+                }
 
                 // add console color render
                 if (colorRendererEnabled)
@@ -2629,6 +2774,29 @@ namespace unify_builder
                                 lkOutputRender.Add(new Regex(@"\b(warning\[\w+\]:\s)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
                                 lkOutputRender.Add(new Regex(@"\b(error\[\w+\]:\s)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
+                            }
+                            break;
+                        case "cosmic_stm8":
+                            {
+                                //#error cpstm8 acia.c:33(25) incompatible compare types
+                                //#error clnk acia.lkf:1 symbol f_recept not defined (vector.o )
+                                //#error clnk acia.lkf:1 symbol f__stext not defined (vector.o )
+
+                                /* compiler */
+                                ccOutputRender.Add(new Regex(@"^(#warning \w+)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
+                                ccOutputRender.Add(new Regex(@"^(#error \w+)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
+
+                                /* linker */
+                                lkOutputRender.Add(new Regex(@"^(#warning \w+)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
+                                lkOutputRender.Add(new Regex(@"^(#error \w+)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
+                                lkOutputRender.Add(new Regex(@"\b(symbol \w+ not defined)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
+                                lkOutputRender.Add(new Regex(@"\b(segment [\.\w\-]+ size overflow)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
                             }
                             break;
@@ -2742,7 +2910,7 @@ namespace unify_builder
                     basecli = Regex.Replace(basecli, @"[^\s]+<asm_file>[^\s]+", "");
                     setEnvValue("EIDE_CUR_COMPILER_AS_BASE_ARGS", basecli);
 
-                    basecli = cmdGen.genLinkCommand(new List<string> { "<obj_1>" }, true).commandLine;
+                    basecli = cmdGen.genLinkCommand(new string[] { "<obj_1>" }, true).commandLine;
                     basecli = Regex.Replace(basecli, @"[^\s]+<obj_1>[^\s]+", "");
                     setEnvValue("EIDE_CUR_COMPILER_LD_BASE_ARGS", basecli);
                 }
@@ -2788,7 +2956,7 @@ namespace unify_builder
                     warn("\r\nASM command line (" + Path.GetFileNameWithoutExtension(cmdInf.exePath) + "): \r\n");
                     log(cmdInf.commandLine);
 
-                    cmdInf = cmdGen.genLinkCommand(new List<string> { "${obj1}", "${obj2}" }, true);
+                    cmdInf = cmdGen.genLinkCommand(new string[] { "${obj1}", "${obj2}" }, true);
                     warn("\r\nLinker command line (" + Path.GetFileNameWithoutExtension(cmdInf.exePath) + "): \r\n");
                     log(cmdInf.commandLine);
 
@@ -3080,7 +3248,9 @@ namespace unify_builder
                         if (exitCode > ERR_LEVEL)
                         {
                             errLogs.Add(ccLog);
-                            throw new Exception("compilation failed at : \"" + cmdInfo.sourcePath + "\", exit code: " + exitCode.ToString());
+                            string msg = "compilation failed at : \"" + cmdInfo.sourcePath + "\", exit code: " + exitCode.ToString() 
+                                       + "\ncommand: \n  " + cmdInfo.shellCommand;
+                            throw new Exception(msg);
                         }
                     }
                 }
@@ -3173,7 +3343,7 @@ namespace unify_builder
                     return order_1 - order_2;
                 });
 
-                CmdGenerator.CmdInfo linkInfo = cmdGen.genLinkCommand(allObjs);
+                CmdGenerator.CmdInfo linkInfo = cmdGen.genLinkCommand(allObjs.ToArray());
 
                 int linkerExitCode = runExe(linkInfo.exePath, linkInfo.commandLine, out string linkerOut, linkInfo.outputEncoding);
 
@@ -3309,6 +3479,8 @@ namespace unify_builder
 
                         string exeLog = "";
 
+                        string task_command = "\"" + outputCmdInfo.exePath + "\" " + outputCmdInfo.commandLine;
+
                         try
                         {
                             string exeAbsPath = replaceEnvVariable(outputCmdInfo.exePath);
@@ -3320,7 +3492,7 @@ namespace unify_builder
                             }
 
                             // must use 'cmd', because SDCC has '>' command
-                            int eCode = runShellCommand("\"" + outputCmdInfo.exePath + "\" " + outputCmdInfo.commandLine, out string _exe_log);
+                            int eCode = runShellCommand(task_command, out string _exe_log);
                             exeLog = _exe_log;
 
                             if (eCode > ERR_LEVEL)
@@ -3341,6 +3513,8 @@ namespace unify_builder
                         catch (Exception err)
                         {
                             error("\t\t[failed]"); // show status after title
+
+                            error("\r\ncommand: " + task_command);
 
                             if (!string.IsNullOrEmpty(exeLog.Trim()))
                             {
@@ -3907,7 +4081,15 @@ namespace unify_builder
             }
         }
 
-        public static string replaceEnvVariable(string str)
+        public static void setEnvVariable(string key, string value) 
+        {
+            setEnvValue(key, value);
+        }
+
+        private static readonly Regex env_exprMatcher1 = new(@"\$\{[\w]+\}", RegexOptions.Compiled);
+        private static readonly Regex env_exprMatcher2 = new(@"\$\([\w]+\)", RegexOptions.Compiled);
+
+        public static string replaceEnvVariable(string str, bool make_undef_var_as_empty = false)
         {
             // max deep: 5
             for (int i = 0; i < 5; i++)
@@ -3921,6 +4103,19 @@ namespace unify_builder
                         .Replace("%" + keyValue.Key + "%", keyValue.Value)
                         .Replace("${" + keyValue.Key + "}", keyValue.Value)
                         .Replace("$(" + keyValue.Key + ")", keyValue.Value);
+                }
+            }
+
+            // resolve unknown vars, set empty value for them !
+            if (make_undef_var_as_empty)
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    if (!(str.Contains("$(") || str.Contains("${")))
+                        break; // no any variable in str, end
+
+                    str = env_exprMatcher1.Replace(str, "");
+                    str = env_exprMatcher2.Replace(str, "");
                 }
             }
 
@@ -4248,7 +4443,10 @@ namespace unify_builder
                             errLogs.Add(cclog);
                         }
 
-                        err = new Exception("compilation failed at : \"" + ccArgs.sourcePath + "\", exit code: " + exitCode.ToString());
+                        string msg = "compilation failed at : \"" + ccArgs.sourcePath + "\", exit code: " + exitCode.ToString()
+                                   + "\ncommand: \n  " + ccArgs.shellCommand;
+
+                        err = new Exception(msg);
                         break;
                     }
                 }
