@@ -1165,6 +1165,9 @@ namespace unify_builder
 
             //--
 
+            FileInfo objliFile = new(outName + ".objlist");
+            File.WriteAllText(objliFile.FullName, string.Join(objSep, objList.ToArray()), encodings["linker"]);
+
             FileInfo paramFile = new(outName + ".lnp");
             File.WriteAllText(paramFile.FullName, cmdLine, encodings["linker"]);
 
