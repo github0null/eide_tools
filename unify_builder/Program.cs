@@ -1615,8 +1615,11 @@ namespace unify_builder
 
             //--
 
-            string _outFileName = null;
+            // create obj root dir
+            string _objRootDir = outDir + Path.DirectorySeparatorChar + ".obj";
+            Directory.CreateDirectory(_objRootDir);
 
+            string _outFileName = null; // a repath for source (without suffix), like: 'src/app/main'
             if (outDirTree) // generate dir tree struct
             {
                 // it's a relative path
@@ -1634,7 +1637,7 @@ namespace unify_builder
 
                     if (!string.IsNullOrWhiteSpace(fDir))
                     {
-                        Directory.CreateDirectory(outDir + Path.DirectorySeparatorChar + fDir);
+                        Directory.CreateDirectory(_objRootDir + Path.DirectorySeparatorChar + fDir);
                         _outFileName = fDir + Path.DirectorySeparatorChar + srcName;
                     }
                     else // no parent dir
@@ -1650,7 +1653,7 @@ namespace unify_builder
                     // convert 'c:\xxx\a.c' -> '<build_out_dir>/c/xxx/a.??'
                     Regex drvReplacer = new Regex(@"^(?<drv>[a-z]):/", RegexOptions.IgnoreCase);
                     string fDir = Utility.toLocalPath(drvReplacer.Replace(fmtSrcDir, "${drv}/"));
-                    Directory.CreateDirectory(outDir + Path.DirectorySeparatorChar + fDir);
+                    Directory.CreateDirectory(_objRootDir + Path.DirectorySeparatorChar + fDir);
                     _outFileName = fDir + Path.DirectorySeparatorChar + srcName;
                 }
             }
@@ -1661,7 +1664,7 @@ namespace unify_builder
                 _outFileName = srcName;
             }
 
-            string outName = getUniqueName(outDir + Path.DirectorySeparatorChar + _outFileName);
+            string outName = getUniqueName(_objRootDir + Path.DirectorySeparatorChar + _outFileName);
             string outPath = outName + outputSuffix;
             string refPath = outName + ".d"; // --depend ${refPath} 
             string listPath = outName + ".lst";

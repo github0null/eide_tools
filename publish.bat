@@ -3,6 +3,7 @@
 ::echo.
 ::echo clean projects ...
 ::dotnet clean
+del /Q /S ".\dist\"
 
 :: for win-x64
 echo.
