@@ -2278,6 +2278,20 @@ namespace unify_builder
             public int order;
         };
 
+        struct MapRegion
+        {
+            public string name;
+            public uint   addr;
+            public uint   size;
+            public uint   max_size;
+        };
+
+        struct MapInfo
+        {
+            public MapRegion[] regions;
+            public string maplog;
+        };
+
         /**
          * command format: 
          * 
@@ -3394,9 +3408,8 @@ namespace unify_builder
                         string mapLog;
 
                         // parse map file
+                        string ccID = cmdGen.getCompilerId().ToLower();
                         {
-                            string ccID = cmdGen.getCompilerId().ToLower();
-
                             switch (ccID)
                             {
                                 case "sdcc":
@@ -3424,10 +3437,12 @@ namespace unify_builder
                         }
 
                         // log mem size
+                        //   if user defined 'ram_max_size' and 'rom_max_size'
                         if ((ram_size >= 0 || rom_size >= 0) &&
                             (ram_max_size > 0 && rom_max_size > 0))
                         {
                             log("");
+                            log("Total Memory Usage:");
 
                             if (ram_size >= 0) // print ram usage
                             {
@@ -3436,12 +3451,12 @@ namespace unify_builder
                                     float size_kb = ram_size / 1024.0f;
                                     float max_kb = ram_max_size / 1024.0f;
                                     string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
-                                    printProgress("RAM: ", (float)ram_size / ram_max_size, suffix);
+                                    printProgress(" RAM: ", (float)ram_size / ram_max_size, suffix);
                                 }
                                 else
                                 {
                                     string suffix = ram_size.ToString() + "B/" + ram_max_size.ToString() + "B";
-                                    printProgress("RAM: ", (float)ram_size / ram_max_size, suffix);
+                                    printProgress(" RAM: ", (float)ram_size / ram_max_size, suffix);
                                 }
                             }
 
@@ -3452,19 +3467,57 @@ namespace unify_builder
                                     float size_kb = rom_size / 1024.0f;
                                     float max_kb = rom_max_size / 1024.0f;
                                     string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
-                                    printProgress("ROM: ", (float)rom_size / rom_max_size, suffix);
+                                    printProgress(" ROM: ", (float)rom_size / rom_max_size, suffix);
                                 }
                                 else
                                 {
                                     string suffix = rom_size.ToString() + "B/" + rom_max_size.ToString() + "B";
-                                    printProgress("ROM: ", (float)rom_size / rom_max_size, suffix);
+                                    printProgress(" ROM: ", (float)rom_size / rom_max_size, suffix);
+                                }
+                            }
+                        }
+                        
+                        if (ccID == "ac5" || ccID == "ac6")
+                        {
+                            MapInfo mapinfo = new();
+                            parseMapInfoForArmlink(mapFileFullPath, out mapinfo);
+
+                            if (mapinfo.regions.Length > 0)
+                            {
+                                log("");
+                                log("Section Memory Usage:");
+
+                                int _name_max_len = 0;
+                                foreach (var region in mapinfo.regions)
+                                {
+                                    var n = $"{region.name} (0x{region.addr:X8})";
+                                    if (_name_max_len < n.Length)
+                                        _name_max_len = n.Length;
+                                }
+
+                                foreach (var region in mapinfo.regions)
+                                {
+                                    if (region.size > 1024)
+                                    {
+                                        float size_kb = region.size / 1024.0f;
+                                        float max_kb  = region.max_size / 1024.0f;
+                                        string s = $"{size_kb:f1}KB/{max_kb:f1}KB";
+                                        string n = $"{region.name} (0x{region.addr:X8})".PadRight(_name_max_len);
+                                        printProgress($" {n}: ", (float)region.size / region.max_size, s);
+                                    }
+                                    else
+                                    {
+                                        string s = $"{region.size}B/{region.max_size}B";
+                                        string n = $"{region.name} (0x{region.addr:X8})".PadRight(_name_max_len);
+                                        printProgress($" {n}: ", (float)region.size / region.max_size, s);
+                                    }
                                 }
                             }
                         }
                     }
                     catch (Exception err)
                     {
-                        warn("\r\ncan't read information from '.map' file !, " + err.Message);
+                        warn("\r\ncan't read information from '.map' file !, " + err.Message + "\n " + err.StackTrace);
                     }
                 }
 
@@ -3585,6 +3638,74 @@ namespace unify_builder
             unlockLogs();
 
             return CODE_DONE;
+        }
+
+        static void parseMapInfoForArmlink(string mapFileFullPath, out MapInfo mapInfo)
+        {
+            StringBuilder mLog = new StringBuilder();
+            List<MapRegion> regions = new List<MapRegion>(8);
+
+            foreach (string _line in File.ReadLines(mapFileFullPath))
+            {
+                string line_trimed = _line.Trim();
+
+                // parse these:
+                // ---
+                //Total RO  Size(Code + RO Data)               487024(475.61kB)
+                //Total RW  Size(RW Data + ZI Data)            453932(443.29kB)
+                //Total ROM Size(Code + RO Data + RW Data)     489824(478.34kB)
+                if (line_trimed.StartsWith("Total"))
+                {
+                    if (Regex.IsMatch(line_trimed, @"^Total .+? Size"))
+                        mLog.AppendLine(line_trimed);
+                }
+
+                // parse these:
+                // ---
+                //Load Region LR$$.ARM.__AT_0x30040000(Base: 0x30040000, Size: 0x00000000, Max: 0x00000060, ABSOLUTE)
+                // Execution Region ER$$.ARM.__AT_0x30040000(Base: 0x30040000, Size: 0x00000060, Max: 0x00000060, ABSOLUTE, UNINIT)
+                //  Base Addr    Size Type   Attr Idx    E Section Name Object
+                //  0x30040000   0x00000060   Zero RW        59977    .ARM.__AT_0x30040000 nx_stm32_eth_driver.o
+                // Execution Region ER_IROM1 (Base: 0x08000000, Size: 0x00076e70, Max: 0x00200000, ABSOLUTE)
+                if (line_trimed.StartsWith("Execution Region "))
+                {
+                    var m = Regex.Match(line_trimed, @"^Execution Region\s+(?<name>[^\s]+)\s+\((?<attrs>.+)\)$");
+                    if (m.Success && m.Groups.Count > 2)
+                    {
+                        MapRegion region = new MapRegion {
+                            name = null,
+                            addr = 0,
+                            size = 0,
+                            max_size = 0,
+                        };
+
+                        region.name = m.Groups["name"].Value;
+                        var attrs   = m.Groups["attrs"].Value.Split(',');
+                        foreach (var attr in attrs)
+                        {
+                            var parts = attr.Split(':');
+                            if (parts.Length == 2)
+                            {
+                                var k = parts[0].Trim();
+                                var v = parts[1].Trim();
+
+                                if (k == "Base")
+                                    region.addr = Convert.ToUInt32(v, 16);
+                                else if (k == "Size")
+                                    region.size = Convert.ToUInt32(v, 16);
+                                else if (k == "Max")
+                                    region.max_size = Convert.ToUInt32(v, 16);
+                            }
+                        }
+
+                        if (region.name != null && region.max_size > 0)
+                            regions.Add(region);
+                    }
+                }
+            }
+
+            mapInfo.regions = regions.ToArray();
+            mapInfo.maplog  = mLog.ToString();
         }
 
         static void parseMapFileForIar(string mapFileFullPath,

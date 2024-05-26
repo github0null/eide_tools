@@ -10,7 +10,7 @@
     <Copyright>Copyright @ em-ide.com 2023 all right reserved</Copyright>
     <Company>em-ide.com</Company>
     <ErrorReport>none</ErrorReport>
-    <Version>3.7.1</Version>
+    <Version>3.7.2</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
