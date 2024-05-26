@@ -1,15 +1,25 @@
 @echo off
 
+set DIST_DIR="D:\Code_Project\TypeScript\eide\res\tools"
+if not exist %DIST_DIR% (
+    set DIST_DIR=".\dist"
+)
+
+echo.
+echo =======================================
+echo  Output Folder: %DIST_DIR%
+echo =======================================
+
 ::echo.
 ::echo clean projects ...
 ::dotnet clean
-del /Q /S ".\dist\"
+::del /Q /S ".\dist\"
 
 :: for win-x64
 echo.
 echo --- publish for win-x64 ---
 echo.
-dotnet publish ./eide_tools.sln -o ./dist/win-x64^
+dotnet publish ./eide_tools.sln -o %DIST_DIR%/win32/unify_builder^
                -c Release --no-self-contained^
                --os win --arch x64^
                --framework net6.0^
@@ -22,7 +32,7 @@ dotnet publish ./eide_tools.sln -o ./dist/win-x64^
 echo.
 echo --- publish for linux-x64 ---
 echo.
-dotnet publish ./eide_tools.sln -o ./dist/linux-x64^
+dotnet publish ./eide_tools.sln -o %DIST_DIR%/linux/unify_builder^
                -c Release --no-self-contained^
                --os linux --arch x64^
                --framework net6.0^
@@ -34,7 +44,7 @@ dotnet publish ./eide_tools.sln -o ./dist/linux-x64^
 echo.
 echo --- publish for osx-x64 ---
 echo.
-dotnet publish ./eide_tools.sln -o ./dist/osx-x64^
+dotnet publish ./eide_tools.sln -o %DIST_DIR%/darwin/unify_builder/x86_64^
                -c Release --no-self-contained^
                -r osx-x64^
                --framework net6.0^
@@ -45,7 +55,7 @@ dotnet publish ./eide_tools.sln -o ./dist/osx-x64^
 echo.
 echo --- publish for osx-arm64 ---
 echo.
-dotnet publish ./eide_tools.sln -o ./dist/osx-arm64^
+dotnet publish ./eide_tools.sln -o %DIST_DIR%/darwin/unify_builder/arm64^
                -c Release --no-self-contained^
                -r osx-arm64^
                --framework net6.0^
