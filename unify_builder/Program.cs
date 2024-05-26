@@ -3451,12 +3451,12 @@ namespace unify_builder
                                     float size_kb = ram_size / 1024.0f;
                                     float max_kb = ram_max_size / 1024.0f;
                                     string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
-                                    printProgress(" RAM: ", (float)ram_size / ram_max_size, suffix);
+                                    printProgress("  RAM: ", (float)ram_size / ram_max_size, suffix);
                                 }
                                 else
                                 {
                                     string suffix = ram_size.ToString() + "B/" + ram_max_size.ToString() + "B";
-                                    printProgress(" RAM: ", (float)ram_size / ram_max_size, suffix);
+                                    printProgress("  RAM: ", (float)ram_size / ram_max_size, suffix);
                                 }
                             }
 
@@ -3467,12 +3467,12 @@ namespace unify_builder
                                     float size_kb = rom_size / 1024.0f;
                                     float max_kb = rom_max_size / 1024.0f;
                                     string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
-                                    printProgress(" ROM: ", (float)rom_size / rom_max_size, suffix);
+                                    printProgress("  ROM: ", (float)rom_size / rom_max_size, suffix);
                                 }
                                 else
                                 {
                                     string suffix = rom_size.ToString() + "B/" + rom_max_size.ToString() + "B";
-                                    printProgress(" ROM: ", (float)rom_size / rom_max_size, suffix);
+                                    printProgress("  ROM: ", (float)rom_size / rom_max_size, suffix);
                                 }
                             }
                         }
@@ -3503,13 +3503,13 @@ namespace unify_builder
                                         float max_kb  = region.max_size / 1024.0f;
                                         string s = $"{size_kb:f1}KB/{max_kb:f1}KB";
                                         string n = $"{region.name} (0x{region.addr:X8})".PadRight(_name_max_len);
-                                        printProgress($" {n}: ", (float)region.size / region.max_size, s);
+                                        printProgress($"  {n}: ", (float)region.size / region.max_size, s);
                                     }
                                     else
                                     {
                                         string s = $"{region.size}B/{region.max_size}B";
                                         string n = $"{region.name} (0x{region.addr:X8})".PadRight(_name_max_len);
-                                        printProgress($" {n}: ", (float)region.size / region.max_size, s);
+                                        printProgress($"  {n}: ", (float)region.size / region.max_size, s);
                                     }
                                 }
                             }
