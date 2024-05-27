@@ -2278,7 +2278,7 @@ namespace unify_builder
             public int order;
         };
 
-        struct MapRegion
+        class MapRegion
         {
             public string name;
             public uint   addr;
@@ -2286,10 +2286,15 @@ namespace unify_builder
             public uint   max_size;
         };
 
-        struct MapInfo
+        class MapRegionItem
         {
-            public MapRegion[] regions;
-            public string maplog;
+            public MapRegion   attr;
+            public MapRegion[] children;
+        };
+
+        class MapRegionInfo
+        {
+            public MapRegionItem[] load_regions;
         };
 
         /**
@@ -3443,73 +3448,63 @@ namespace unify_builder
                         {
                             log("");
                             log("Total Memory Usage:");
+                            log("");
 
                             if (ram_size >= 0) // print ram usage
                             {
-                                if (ram_size > 1024)
-                                {
-                                    float size_kb = ram_size / 1024.0f;
-                                    float max_kb = ram_max_size / 1024.0f;
-                                    string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
-                                    printProgress("  RAM: ", (float)ram_size / ram_max_size, suffix);
-                                }
-                                else
-                                {
-                                    string suffix = ram_size.ToString() + "B/" + ram_max_size.ToString() + "B";
-                                    printProgress("  RAM: ", (float)ram_size / ram_max_size, suffix);
-                                }
+                                string s = $"{memorysize2str((uint)ram_size)}/{memorysize2str((uint)ram_max_size)}";
+                                printProgress("  RAM: ", (float)ram_size / ram_max_size, s);
                             }
 
                             if (rom_size >= 0) // print rom usage
                             {
-                                if (rom_size > 1024)
-                                {
-                                    float size_kb = rom_size / 1024.0f;
-                                    float max_kb = rom_max_size / 1024.0f;
-                                    string suffix = size_kb.ToString("f1") + "KB/" + max_kb.ToString("f1") + "KB";
-                                    printProgress("  ROM: ", (float)rom_size / rom_max_size, suffix);
-                                }
-                                else
-                                {
-                                    string suffix = rom_size.ToString() + "B/" + rom_max_size.ToString() + "B";
-                                    printProgress("  ROM: ", (float)rom_size / rom_max_size, suffix);
-                                }
+                                string s = $"{memorysize2str((uint)rom_size)}/{memorysize2str((uint)rom_max_size)}";
+                                printProgress("  ROM: ", (float)rom_size / rom_max_size, s);
                             }
                         }
                         
                         if (ccID == "ac5" || ccID == "ac6")
                         {
-                            MapInfo mapinfo = new();
-                            parseMapInfoForArmlink(mapFileFullPath, out mapinfo);
+                            parseMapRegionInfoForArmlink(mapFileFullPath, out MapRegionInfo mapinfo);
 
-                            if (mapinfo.regions.Length > 0)
+                            if (mapinfo.load_regions.Length > 0)
                             {
                                 log("");
                                 log("Section Memory Usage:");
 
-                                int _name_max_len = 0;
-                                foreach (var region in mapinfo.regions)
-                                {
-                                    var n = $"{region.name} (0x{region.addr:X8})";
-                                    if (_name_max_len < n.Length)
-                                        _name_max_len = n.Length;
-                                }
+                                var makeRegionDespStr = (MapRegion region) => $"{region.name} (0x{region.addr:X8})";
 
-                                foreach (var region in mapinfo.regions)
+                                var printRegion = (MapRegion region, int desp_max_len, int depth, string prefix) => {
+                                    string s = $"{memorysize2str(region.size)}/{memorysize2str(region.max_size)}";
+                                    string n = makeRegionDespStr(region);
+                                    if (desp_max_len > 0) n = n.PadRight(desp_max_len);
+                                    printProgress("".PadRight(depth * 2) + prefix + $"{n}: ", (float)region.size / region.max_size, s);
+                                };
+
+                                foreach (var region in mapinfo.load_regions)
                                 {
-                                    if (region.size > 1024)
+                                    log("");
+
+                                    printRegion(region.attr, 0, 1, "");
+
+                                    if (region.children.Length > 0)
                                     {
-                                        float size_kb = region.size / 1024.0f;
-                                        float max_kb  = region.max_size / 1024.0f;
-                                        string s = $"{size_kb:f1}KB/{max_kb:f1}KB";
-                                        string n = $"{region.name} (0x{region.addr:X8})".PadRight(_name_max_len);
-                                        printProgress($"  {n}: ", (float)region.size / region.max_size, s);
+                                        int _max_len = 0;
+                                        foreach (var child in region.children)
+                                        {
+                                            var n = makeRegionDespStr(child);
+                                            if (_max_len < n.Length)
+                                                _max_len = n.Length;
+                                        }
+
+                                        foreach (var child in region.children)
+                                        {
+                                            printRegion(child, _max_len, 2, "- ");
+                                        }
                                     }
-                                    else
+                                    else 
                                     {
-                                        string s = $"{region.size}B/{region.max_size}B";
-                                        string n = $"{region.name} (0x{region.addr:X8})".PadRight(_name_max_len);
-                                        printProgress($"  {n}: ", (float)region.size / region.max_size, s);
+                                        log("".PadRight(2 * 2) + "  " + "** This load region have no execution regions. **");
                                     }
                                 }
                             }
@@ -3640,10 +3635,69 @@ namespace unify_builder
             return CODE_DONE;
         }
 
-        static void parseMapInfoForArmlink(string mapFileFullPath, out MapInfo mapInfo)
+        static string memorysize2str(uint size)
         {
-            StringBuilder mLog = new StringBuilder();
-            List<MapRegion> regions = new List<MapRegion>(8);
+            if (size > 1024)
+            {
+                if (size > 1024 * 1024)
+                {
+                    return $"{size/(1024.0f * 1024.0f):f1}MB";
+                }
+                else
+                {
+                    return $"{size/(1024.0f):f1}KB";
+                }
+            }
+            else
+            {
+                return $"{size}B";
+            }
+        }
+
+        static void parseMapRegionInfoForArmlink(string mapFileFullPath, out MapRegionInfo regionInfo)
+        {
+            Func<string, MapRegion> parseRegion = (string line) => {
+
+                var m = Regex.Match(line, @"^\w+ Region\s+(?<name>[^\s]+)\s+\((?<attrs>.+)\)$");
+                if (m.Success && m.Groups.Count > 2)
+                {
+                    MapRegion region = new MapRegion {
+                        name = null,
+                        addr = 0,
+                        size = 0,
+                        max_size = 0,
+                    };
+
+                    region.name = m.Groups["name"].Value;
+                    var attrs   = m.Groups["attrs"].Value.Split(',');
+                    foreach (var attr in attrs)
+                    {
+                        var parts = attr.Split(':');
+                        if (parts.Length == 2)
+                        {
+                            var k = parts[0].Trim();
+                            var v = parts[1].Trim();
+
+                            if (k == "Base")
+                                region.addr = Convert.ToUInt32(v, 16);
+                            else if (k == "Size")
+                                region.size = Convert.ToUInt32(v, 16);
+                            else if (k == "Max")
+                                region.max_size = Convert.ToUInt32(v, 16);
+                        }
+                    }
+
+                    if (region.name != null && region.max_size > 0)
+                        return region;
+                }
+
+                return null;
+            };
+
+            List<MapRegionItem> load_regions = new(4);
+
+            MapRegionItem   cur_region = null;
+            List<MapRegion> cur_children = new(10);
 
             foreach (string _line in File.ReadLines(mapFileFullPath))
             {
@@ -3651,61 +3705,54 @@ namespace unify_builder
 
                 // parse these:
                 // ---
-                //Total RO  Size(Code + RO Data)               487024(475.61kB)
-                //Total RW  Size(RW Data + ZI Data)            453932(443.29kB)
-                //Total ROM Size(Code + RO Data + RW Data)     489824(478.34kB)
-                if (line_trimed.StartsWith("Total"))
+                //Load Region LR$$.ARM.__AT_0x30040000(Base: 0x30040000, Size: 0x00000000, Max: 0x00000060, ABSOLUTE)
+                if (line_trimed.StartsWith("Load Region "))
                 {
-                    if (Regex.IsMatch(line_trimed, @"^Total .+? Size"))
-                        mLog.AppendLine(line_trimed);
+                    var region = parseRegion(line_trimed);
+                    if (region != null)
+                    {
+                        if (cur_region != null) 
+                        {
+                            cur_region.children = cur_children.ToArray();
+                            load_regions.Add(cur_region);
+                        }
+
+                        cur_region = new MapRegionItem {
+                            attr     = region,
+                            children = null,
+                        };
+                        cur_children.Clear();
+                    }
                 }
 
                 // parse these:
                 // ---
-                //Load Region LR$$.ARM.__AT_0x30040000(Base: 0x30040000, Size: 0x00000000, Max: 0x00000060, ABSOLUTE)
                 // Execution Region ER$$.ARM.__AT_0x30040000(Base: 0x30040000, Size: 0x00000060, Max: 0x00000060, ABSOLUTE, UNINIT)
                 //  Base Addr    Size Type   Attr Idx    E Section Name Object
                 //  0x30040000   0x00000060   Zero RW        59977    .ARM.__AT_0x30040000 nx_stm32_eth_driver.o
                 // Execution Region ER_IROM1 (Base: 0x08000000, Size: 0x00076e70, Max: 0x00200000, ABSOLUTE)
                 if (line_trimed.StartsWith("Execution Region "))
                 {
-                    var m = Regex.Match(line_trimed, @"^Execution Region\s+(?<name>[^\s]+)\s+\((?<attrs>.+)\)$");
-                    if (m.Success && m.Groups.Count > 2)
+                    var region = parseRegion(line_trimed);
+                    if (region != null)
                     {
-                        MapRegion region = new MapRegion {
-                            name = null,
-                            addr = 0,
-                            size = 0,
-                            max_size = 0,
-                        };
-
-                        region.name = m.Groups["name"].Value;
-                        var attrs   = m.Groups["attrs"].Value.Split(',');
-                        foreach (var attr in attrs)
+                        if (cur_region != null)
                         {
-                            var parts = attr.Split(':');
-                            if (parts.Length == 2)
-                            {
-                                var k = parts[0].Trim();
-                                var v = parts[1].Trim();
-
-                                if (k == "Base")
-                                    region.addr = Convert.ToUInt32(v, 16);
-                                else if (k == "Size")
-                                    region.size = Convert.ToUInt32(v, 16);
-                                else if (k == "Max")
-                                    region.max_size = Convert.ToUInt32(v, 16);
-                            }
+                            cur_children.Add(region);
                         }
-
-                        if (region.name != null && region.max_size > 0)
-                            regions.Add(region);
                     }
                 }
             }
 
-            mapInfo.regions = regions.ToArray();
-            mapInfo.maplog  = mLog.ToString();
+            if (cur_region != null)
+            {
+                cur_region.children = cur_children.ToArray();
+                load_regions.Add(cur_region);
+            }
+
+            regionInfo = new MapRegionInfo {
+                load_regions = load_regions.ToArray()
+            };
         }
 
         static void parseMapFileForIar(string mapFileFullPath,
@@ -4103,10 +4150,10 @@ namespace unify_builder
             }
 
             string progTxt = label + "[" + new string(barTxt) + "] "
-                + ((progress * 100).ToString("f1") + "%").PadRight(8 + 3)
+                + ((progress * 100).ToString("f1") + "%").PadRight(9)
                 + (" " + suffix);
 
-            if (progress >= 1.0f)
+            if (progress > 1.0f)
             {
                 error(progTxt);
             }
@@ -4116,7 +4163,7 @@ namespace unify_builder
             }
             else
             {
-                info(progTxt);
+                log(progTxt);
             }
         }
 
