@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 
 namespace axf2elf
 {
@@ -14,6 +16,7 @@ namespace axf2elf
         static Regex entry_header_matcher = new Regex(@"^\*\* program header [^\[]+ .*\bPF_ARM_ENTRY\b.*", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         static Regex section_matcher = new Regex(@"^\*\* section #\d+ '(\S+)'[^\[]* \[(.+)\]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         static Regex addr_matcher = new Regex(@"address:\s*(0x[0-9a-f]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        static bool  isWin32 = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
         public class section_info
         {
@@ -25,7 +28,6 @@ namespace axf2elf
         /**
          * params format:
          *              -d <Arm_tool_folder>
-         *              -b <bin_file_path>
          *              -i <axf_file_path>
          *              -o <output_file_path>
          */
@@ -39,7 +41,6 @@ namespace axf2elf
 
             string arm_tool_folder = "";
             string axf_file_path = "";
-            string bin_file_path = "";
             string output_file_path = "";
 
             for (int i = 0; i < args.Length; i += 2)
@@ -55,27 +56,37 @@ namespace axf2elf
                     case "-d":
                         arm_tool_folder = args[i + 1];
                         break;
-                    case "-b":
-                        bin_file_path = args[i + 1];
-                        break;
                     default:
                         break;
                 }
             }
 
-            // get axf information
-            int eCode = runExe(arm_tool_folder + "\\bin\\fromelf.exe",
-                "-r \"" + axf_file_path + "\"", out string exe_log_txt);
+            string fromelf_path = arm_tool_folder + "\\bin\\fromelf" + (isWin32 ? ".exe" : "");
 
+            int eCode;
+            string exe_output;
+
+            // make bin
+            string bin_file_name = Path.GetFileNameWithoutExtension(axf_file_path) + "_" + randomStr() + ".bin";
+            string bin_file_path = Path.GetTempPath() + Path.DirectorySeparatorChar + bin_file_name;
+            eCode = runExe(fromelf_path, $"--bincombined --output \"{bin_file_path}\" \"{axf_file_path}\"", out exe_output);
             if (eCode != CODE_DONE)
             {
-                log(exe_log_txt);
+                log(exe_output);
+                return CODE_ERR;
+            }
+
+            // get axf information
+            eCode = runExe(fromelf_path, $"-r \"{axf_file_path}\"", out exe_output);
+            if (eCode != CODE_DONE)
+            {
+                log(exe_output);
                 return CODE_ERR;
             }
 
             // === parse section info ===
 
-            string[] log_lines = Regex.Split(exe_log_txt, @"\r\n|\n");
+            string[] log_lines = Regex.Split(exe_output, @"\r\n|\n");
 
             List<section_info> section_list = new List<section_info>();
             string entry_header_addr = null;
@@ -204,7 +215,27 @@ namespace axf2elf
 
             log(output_log);
 
+            // === clean ===
+            try
+            {
+                File.Delete(bin_file_path);
+            }
+            catch (Exception)
+            {
+                log($"fail to delete temp file: {bin_file_path}");
+            }
+
             return eCode;
+        }
+
+        static string randomStr(int length = 8)
+        {
+            var crypto = RandomNumberGenerator.Create();
+            var bits = length * 6;
+            var byte_size = (bits + 7) / 8;
+            var bytesarray = new byte[byte_size];
+            crypto.GetBytes(bytesarray);
+            return Convert.ToBase64String(bytesarray);
         }
 
         static int runExe(string exePath, string args, out string _output)
