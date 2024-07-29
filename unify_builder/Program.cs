@@ -4828,14 +4828,12 @@ namespace unify_builder
         static DateTime getSrcRefLastModifyTime(string fpath)
         {
             if (_srcRefsMtCache.ContainsKey(fpath))
-            {
                 return _srcRefsMtCache[fpath];
-            }
 
-            var lastWrTime = File.Exists(fpath)
-                ? File.GetLastWriteTime(fpath)
-                : DateTime.Now;
+            if (!File.Exists(fpath))
+                throw new FileNotFoundException($"no such file '{fpath}'");
 
+            var lastWrTime = File.GetLastWriteTime(fpath);
             _srcRefsMtCache.Add(fpath, lastWrTime);
 
             return lastWrTime;
@@ -4918,12 +4916,21 @@ namespace unify_builder
 
                         foreach (var refpath in refList)
                         {
-                            var lastModifyTime = getSrcRefLastModifyTime(refpath);
+                            try
+                            {
+                                var lastModifyTime = getSrcRefLastModifyTime(refpath);
 
-                            if (DateTime.Compare(lastModifyTime, objLastWriteTime) > 0)
+                                if (DateTime.Compare(lastModifyTime, objLastWriteTime) > 0)
+                                {
+                                    AddToChangeList(cmd);
+                                    diffLogs.Add($"'{cmd.sourcePath}': dependence '{refpath}' has been changed.");
+                                    break; // out of date, need recompile, exit
+                                }
+                            }
+                            catch (FileNotFoundException e)
                             {
                                 AddToChangeList(cmd);
-                                diffLogs.Add($"'{cmd.sourcePath}': dependence '{refpath}' has been changed.");
+                                diffLogs.Add($"'{cmd.sourcePath}': check dependence failed, msg: {e.Message}");
                                 break; // out of date, need recompile, exit
                             }
                         }
@@ -4975,7 +4982,15 @@ namespace unify_builder
         }
 
         static Regex md_whitespaceMatcher = new Regex(@"(?<![\\:]) ", RegexOptions.Compiled);
+        static char[] md_trimEndChars = { '\\', ' ', '\t', '\v', '\r', '\n' };
 
+        // example input
+        //  build/Debug/.obj/__/__/fwlib/STM32F10x_DSP_Lib/src/iir_stm32.o: \
+        //   ../../fwlib/STM32F10x_DSP_Lib/src/iir_stm32.c \
+        //   ../../fwlib/STM32F10x_DSP_Lib/inc/stm32_dsp.h \
+        //   ../../fwlib/CM3/system_stm32f2xx.h ../../fwlib/CM3/stm32f2xx_conf.h\  \
+        //   ../../fwlib/STM32F2xx_StdPeriph_Driver/inc/stm32f2xx_wwdg.h \
+        //   ../../fwlib/STM32F2xx_StdPeriph_Driver/inc/misc.h
         static string[] gnu_parseRefLines(string[] lines)
         {
             HashSet<string> resultList = new HashSet<string>();
@@ -4983,7 +4998,7 @@ namespace unify_builder
 
             for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++)
             {
-                string line = lines[lineIndex].TrimEnd('\\').Trim(); // remove char '\' end of line
+                string line = lines[lineIndex].Trim().TrimEnd(md_trimEndChars); // remove char '\' end of line
 
                 if (lineIndex == 0) // first line is makefile dep format: '<obj>: <deps>'
                 {
@@ -5002,9 +5017,10 @@ namespace unify_builder
 
                     if (resultCnt == 1) continue; /* skip first ref, it's src self */
 
-                    resultList.Add(toAbsolutePath(subLine
-                        .Replace("\\ ", " ")
-                        .Replace("\\:", ":")));
+                    var _path = subLine
+                        .Replace("\\ ", " ").Replace("\\:", ":")
+                        .TrimEnd(md_trimEndChars);
+                    resultList.Add(toAbsolutePath(_path));
                 }
             }
 
@@ -5025,7 +5041,7 @@ namespace unify_builder
                 {
                     string line = lines[i].Substring(sepIndex + 1)
                         .Replace("\\ ", " ").Replace("\\:", ":")
-                        .Trim();
+                        .TrimEnd(md_trimEndChars);
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     resultList.Add(toAbsolutePath(line));
                 }
