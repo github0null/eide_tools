@@ -269,7 +269,7 @@ namespace unify_builder
         {
             public string exePath;          // [required] executable file full path
             public string commandLine;      // [required] executable file cli args
-            public string sourcePath;       // [required] for compiler, value is '.c' path; for linker, value is output '.map' path
+            public string sourcePath;       // [required] for compiler, value is source file absolute path; for linker, value is output '.map' path
             public string outPath;          // [required] output file full path
             public Encoding outputEncoding; // [required] cli encoding, UTF8/GBK/...
 
@@ -4845,6 +4845,7 @@ namespace unify_builder
         static CheckDiffRes checkDiff(string modelID, Dictionary<string, CmdGenerator.CmdInfo> commands)
         {
             CheckDiffRes res = new CheckDiffRes();
+            List<string> diffLogs = new List<string>(256);
 
             Func<CmdGenerator.CmdInfo, bool> AddToChangeList = (cmd) => {
 
@@ -4877,6 +4878,7 @@ namespace unify_builder
                     if (!File.Exists(cmd.outPath)) // not compiled
                     {
                         AddToChangeList(cmd);
+                        diffLogs.Add($"'{cmd.sourcePath}': object (.o) file not exist");
                         continue;
                     }
 
@@ -4887,6 +4889,7 @@ namespace unify_builder
                     if (DateTime.Compare(srcLastWriteTime, objLastWriteTime) > 0)
                     {
                         AddToChangeList(cmd);
+                        diffLogs.Add($"'{cmd.sourcePath}': source file has been changed.");
                     }
 
                     // file options is newer than obj file
@@ -4894,6 +4897,7 @@ namespace unify_builder
                         DateTime.Compare(optLastWriteTime, objLastWriteTime) > 0)
                     {
                         AddToChangeList(cmd);
+                        diffLogs.Add($"'{cmd.sourcePath}': source file options has been changed.");
                     }
 
                     // reference is changed ?
@@ -4905,6 +4909,7 @@ namespace unify_builder
                         if (!File.Exists(refFilePath))
                         {
                             AddToChangeList(cmd);
+                            diffLogs.Add($"'{cmd.sourcePath}': dependence (.d) file not exist");
                             continue; // not found ref file
                         }
 
@@ -4918,6 +4923,7 @@ namespace unify_builder
                             if (DateTime.Compare(lastModifyTime, objLastWriteTime) > 0)
                             {
                                 AddToChangeList(cmd);
+                                diffLogs.Add($"'{cmd.sourcePath}': dependence '{refpath}' has been changed.");
                                 break; // out of date, need recompile, exit
                             }
                         }
@@ -4929,8 +4935,21 @@ namespace unify_builder
                 log("");
                 warn(e.Message);
                 log("");
-                warnWithLable("Check difference failed !, Use normal build !");
+                warnWithLable("Check difference failed !, will rollback to rebuild mode.");
                 log("");
+
+                // fill all cmds
+                res = new CheckDiffRes();
+                foreach (var cmd in commands.Values)
+                    AddToChangeList(cmd);
+                appendLogs($"[warn] incremental build: check difference failed, rollback to rebuild mode.",
+                    e.Message);
+            }
+
+            if (diffLogs.Count > 0) 
+            {
+                appendLogs($"[info] incremental build: {diffLogs.Count} source files changed",
+                    "These source files will be recompiled", diffLogs.ToArray());
             }
 
             return res;
