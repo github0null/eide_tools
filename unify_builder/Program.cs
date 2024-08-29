@@ -201,7 +201,23 @@ namespace unify_builder
 
         private OsInfo()
         {
-            OsType = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win32" : "linux";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                OsType = "win32";
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                OsType = "linux";
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                OsType = "OSX";
+            }
+            else
+            {
+                OsType = "FreeBSD";
+            }
+
             CRLF = OsType == "win32" ? "\r\n" : "\n";
         }
 
@@ -993,6 +1009,13 @@ namespace unify_builder
             string mapPath = outName + mapSuffix;
             string stableCommand = string.Join(" ", baseOpts["linker"].Concat(userOpts["linker"]));
             string cmdLine = compilerAttr_commandPrefix;
+
+            // ARM Compiler 6 on macOS only.
+            // ref: https://github.com/ARM-software/vscode-environment-manager/issues/6
+            if (compilerId == "AC6" && OsInfo.instance().OsType == "OSX")
+            {
+                cmdLine += " --lto_liblto_location=%TOOL_DIR%/bin/libLTO.dylib ";
+            }
 
             if (cmdLocation == "start")
             {
