@@ -1010,6 +1010,13 @@ namespace unify_builder
             string stableCommand = string.Join(" ", baseOpts["linker"].Concat(userOpts["linker"]));
             string cmdLine = compilerAttr_commandPrefix;
 
+            // ARM Compiler 6 on macOS only.
+            // ref: https://github.com/ARM-software/vscode-environment-manager/issues/6
+            if (compilerId == "AC6" && OsInfo.instance().OsType == "OSX")
+            {
+                cmdLine += " --lto_liblto_location=%TOOL_DIR%/bin/libLTO.dylib ";
+            }
+
             if (cmdLocation == "start")
             {
                 cmdLine += stableCommand;
@@ -3386,13 +3393,6 @@ namespace unify_builder
                 });
 
                 CmdGenerator.CmdInfo linkInfo = cmdGen.genLinkCommand(allObjs.ToArray());
-
-                // ARM Compiler 6 on macOS only.
-                // ref: https://github.com/ARM-software/vscode-environment-manager/issues/6
-                if (cmdGen.getCompilerId() == "AC6" && OsInfo.instance().OsType == "OSX")
-                {
-                    linkInfo.commandLine = " --lto_liblto_location=%TOOL_DIR%/bin/libLTO.dylib " + linkInfo.commandLine;
-                }
 
                 int linkerExitCode = runExe(linkInfo.exePath, linkInfo.commandLine, out string linkerOut, linkInfo.outputEncoding);
 
