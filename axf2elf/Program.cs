@@ -61,7 +61,16 @@ namespace axf2elf
                 }
             }
 
-            string fromelf_path = arm_tool_folder + "\\bin\\fromelf" + (isWin32 ? ".exe" : "");
+            string fromelf_path;
+
+            if (isWin32)
+            {
+                fromelf_path = arm_tool_folder + "\\bin\\fromelf.exe";
+            }
+            else
+            {
+                fromelf_path = arm_tool_folder + "/bin/fromelf";
+            }
 
             int eCode;
             string exe_output;

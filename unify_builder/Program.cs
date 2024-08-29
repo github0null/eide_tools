@@ -201,7 +201,23 @@ namespace unify_builder
 
         private OsInfo()
         {
-            OsType = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win32" : "linux";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                OsType = "win32";
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                OsType = "linux";
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                OsType = "OSX";
+            }
+            else
+            {
+                OsType = "FreeBSD";
+            }
+
             CRLF = OsType == "win32" ? "\r\n" : "\n";
         }
 
@@ -3370,6 +3386,13 @@ namespace unify_builder
                 });
 
                 CmdGenerator.CmdInfo linkInfo = cmdGen.genLinkCommand(allObjs.ToArray());
+
+                // ARM Compiler 6 on macOS only.
+                // ref: https://github.com/ARM-software/vscode-environment-manager/issues/6
+                if (cmdGen.getCompilerId() == "AC6" && OsInfo.instance().OsType == "OSX")
+                {
+                    linkInfo.commandLine = " --lto_liblto_location=%TOOL_DIR%/bin/libLTO.dylib " + linkInfo.commandLine;
+                }
 
                 int linkerExitCode = runExe(linkInfo.exePath, linkInfo.commandLine, out string linkerOut, linkInfo.outputEncoding);
 
