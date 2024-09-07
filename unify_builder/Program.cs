@@ -211,11 +211,11 @@ namespace unify_builder
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                OsType = "OSX";
+                OsType = "osx";
             }
             else
             {
-                OsType = "FreeBSD";
+                OsType = "freebsd";
             }
 
             CRLF = OsType == "win32" ? "\r\n" : "\n";
@@ -1012,7 +1012,7 @@ namespace unify_builder
 
             // ARM Compiler 6 on macOS only.
             // ref: https://github.com/ARM-software/vscode-environment-manager/issues/6
-            if (compilerId == "AC6" && OsInfo.instance().OsType == "OSX")
+            if (compilerId == "AC6" && OsInfo.instance().OsType == "osx")
             {
                 cmdLine += " --lto_liblto_location=%TOOL_DIR%/bin/libLTO.dylib ";
             }
