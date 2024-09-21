@@ -286,13 +286,13 @@ namespace unify_builder
             public string exePath;          // [required] executable file full path
             public string commandLine;      // [required] executable file cli args
             public string sourcePath;       // [required] for compiler, value is source file absolute path; for linker, value is output '.map' path
+            public string sourceArgs;       // [required] real compiler options just for c/c++/asm source files, otherwise it's null
+            public string sourceType;       // [required] source file type, value: 'c', 'cpp', 'asm', or 'other'
             public string outPath;          // [required] output file full path
             public Encoding outputEncoding; // [required] cli encoding, UTF8/GBK/...
 
-            public string srcType;          // [optional] source file type, value: 'c', 'cpp', 'asm'
-
-            public string compilerId;       // [optional] [used in compile process] compiler id (lower case), like: 'gcc', 'sdcc'
-            public string compilerType;     // [optional] [used in compile process] compiler type, like: 'c', 'asm', 'linker'
+            public string compilerId;       // [optional] compiler id (lower case), like: 'gcc', 'sdcc'
+            public string compilerModel;    // [optional] compiler model name: 'c', 'cpp', 'c/cpp', 'asm', 'asm-clang', 'linker' ...
 
             public string title;            // [optional] a title for this command
             public string shellCommand;     // [optional] shell command which will be invoke compiler, used to gen 'compile_commands.json'
@@ -1234,10 +1234,11 @@ namespace unify_builder
 
             return new CmdInfo {
                 compilerId = compilerId.ToLower(),
-                compilerType = "linker",
+                compilerModel = "linker",
                 exePath = getActivedToolFullPath("linker"),
                 commandLine = commandLine,
                 sourcePath = mapPath,
+                sourceType = "other",
                 outPath = outPath,
                 outputEncoding = encodings["linker"]
             };
@@ -1275,6 +1276,7 @@ namespace unify_builder
                     exePath = toAbsToolPath(outputModel["toolPath"].Value<string>()),
                     commandLine = command,
                     sourcePath = linkerOutputFile,
+                    sourceType = "other",
                     outPath = outFilePath,
                     outputEncoding = encodings["linker"]
                 });
@@ -1361,6 +1363,19 @@ namespace unify_builder
             return model.ContainsKey("version") ? (JObject)model["version"] : null;
         }
 
+        /// <summary>
+        /// Get current compiler's identifier
+        /// </summary>
+        /// <returns>
+        ///  - KEIL_C51
+        ///  - GCC
+        ///  - IAR_ARM
+        ///  - AC5
+        ///  - AC6
+        ///  - SDCC
+        ///  - COSMIC_STM8
+        ///  - IAR_STM8
+        /// </returns>
         public string getCompilerId()
         {
             return model.ContainsKey("id") ? model["id"].Value<string>() : getModelName();
@@ -1882,25 +1897,21 @@ namespace unify_builder
             }
 
             var buildArgs = new CmdInfo {
-                srcType = modelName,
                 compilerId = getCompilerId().ToLower(),
-                compilerType = modelName,
+                compilerModel = modelName,
                 exePath = exeFullPath,
                 commandLine = commandLines,
                 sourcePath = fpath,
+                sourceType = modelName.StartsWith("asm") ? "asm" : modelName,
+                sourceArgs = compilerArgs,
                 outPath = outPath,
                 outputEncoding = encodings[modelName]
             };
 
-            if (modelName.StartsWith("asm"))
-            {
-                buildArgs.srcType = "asm";
-            }
-
             // create cli args for 'compile_commands.json'
             {
                 buildArgs.shellCommand = "\"" + Program.replaceEnvVariable(exeFullPath) + "\" " + compilerArgs
-                    .Replace("${out}", toRelativePathForCompilerArgs(Path.ChangeExtension(outPath, ".obj"), isQuote))
+                    .Replace("${out}", toRelativePathForCompilerArgs(Path.ChangeExtension(outPath, outputSuffix), isQuote))
                     .Replace("${in}", toRelativePathForCompilerArgs(fpath, isQuote));
             }
 
@@ -2361,6 +2372,9 @@ namespace unify_builder
 
             [Option("only-dump-args", Required = false, HelpText = "only print compiler args")]
             public bool OnlyDumpArgs { get; set; }
+
+            [Option("use-ccache", Required = false, HelpText = "use ccache speed up compilation")]
+            public bool UseCcache { get; set; }
         }
 
         // linux VT100 color
@@ -2573,6 +2587,15 @@ namespace unify_builder
                 outDir = paramsObj["outDir"].Value<string>();
                 builderDir = Path.GetDirectoryName(appBaseDir);
 
+                // init syspath
+                if (paramsObj.ContainsKey("sysPaths"))
+                {
+                    foreach (var path in paramsObj["sysPaths"].Values<string>())
+                    {
+                        setEnvVariable("PATH", path);
+                    }
+                }
+
                 // get real path
                 dumpPath = Utility.isAbsolutePath(dumpPath) ? dumpPath : (projectRoot + Path.DirectorySeparatorChar + dumpPath);
                 outDir = Utility.isAbsolutePath(outDir) ? outDir : (projectRoot + Path.DirectorySeparatorChar + outDir);
@@ -2590,7 +2613,7 @@ namespace unify_builder
                 showRelativePathOnLog = paramsObj.ContainsKey("showRepathOnLog") ? paramsObj["showRepathOnLog"].Value<bool>() : false;
                 refJsonName = paramsObj.ContainsKey("sourceMapName") ? paramsObj["sourceMapName"].Value<string>() : "ref.json";
 
-                // init other params
+                // prepare builder params
                 ERR_LEVEL = compilerModel.ContainsKey("ERR_LEVEL") ? compilerModel["ERR_LEVEL"].Value<int>() : ERR_LEVEL;
                 prepareModel();
                 prepareParams(paramsObj);
@@ -2706,11 +2729,6 @@ namespace unify_builder
 
                 // add appBase folder to system env
                 setEnvValue("PATH", appBaseDir);
-
-                // add builder root folder to system env
-                setEnvValue("PATH", builderDir +
-                    Path.DirectorySeparatorChar + "msys" +
-                    Path.DirectorySeparatorChar + "bin");
 
                 // add user env from bulder.params
                 if (paramsObj.ContainsKey("env"))
@@ -3207,12 +3225,54 @@ namespace unify_builder
                 /* use incremental mode */
                 if (checkMode(BuilderMode.FAST))
                 {
-                    CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
-                    src_count_c   = res.cCount;
-                    src_count_cpp = res.cppCount;
-                    src_count_asm = res.asmCount;
-                    commands      = res.totalCmds;
-                    infoWithLable("file statistics (incremental mode)\r\n");
+                    string ccID = cmdGen.getCompilerId().ToLower();
+                    if (cliArgs.UseCcache && ccID == "gcc")
+                    {
+                        infoWithLable("file statistics (ccache enabled)\r\n");
+
+                        setEnvVariable("CCACHE_DIR", outDir + Path.DirectorySeparatorChar 
+                            + ".ccache");
+                        setEnvVariable("CCACHE_LOGFILE", outDir + Path.DirectorySeparatorChar
+                            + "ccache.log");
+
+                        var specs_mather = new Regex(@"specs=([\w][^ \\\/]+)", RegexOptions.Compiled);
+
+                        foreach (var item in commands)
+                        {
+                            string _srcArgs = item.Value.sourceArgs;
+                            // TO FIX ccache: Failed to stat nano.specs: No such file or directory
+                            _srcArgs = specs_mather.Replace(_srcArgs, "specs=\"%TOOL_DIR%/arm-none-eabi/lib/$1\"");
+                            item.Value.commandLine = $"\"{item.Value.exePath}\" " + _srcArgs;
+                            item.Value.exePath     = "ccache";
+                        }
+                    }
+                    else if (cliArgs.UseCcache && ccID == "ac6")
+                    {
+                        infoWithLable("file statistics (ccache enabled)\r\n");
+
+                        setEnvVariable("CCACHE_DIR", outDir + Path.DirectorySeparatorChar
+                            + ".ccache");
+                        setEnvVariable("CCACHE_LOGFILE", outDir + Path.DirectorySeparatorChar
+                            + "ccache.log");
+
+                        foreach (var item in commands)
+                        {
+                            // skip ccache for armasm.exe
+                            if (item.Value.compilerModel == "asm") continue;
+                            string _srcArgs = item.Value.sourceArgs;
+                            item.Value.commandLine = $"\"{item.Value.exePath}\" " + _srcArgs;
+                            item.Value.exePath     = "ccache";
+                        }
+                    }
+                    else
+                    {
+                        CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
+                        src_count_c   = res.cCount;
+                        src_count_cpp = res.cppCount;
+                        src_count_asm = res.asmCount;
+                        commands      = res.totalCmds;
+                        infoWithLable("file statistics (incremental mode)\r\n");
+                    }
                 }
 
                 /* rebuild mode */
@@ -3253,7 +3313,7 @@ namespace unify_builder
                     {
                         curCnt++;
 
-                        string compilerTag = cmdInfo.compilerType == "asm" ? "AS" : "CC";
+                        string compilerTag = getCompileLogTag(cmdInfo.sourceType);
                         string progressTag = genProgressTag(curCnt, total);
 
                         log(">> " + progressTag + " " + compilerTag + " '" + toHumanReadablePath(cmdInfo.sourcePath) + "'");
@@ -4523,6 +4583,16 @@ namespace unify_builder
             return res.ToArray();
         }
 
+        static string getCompileLogTag(string sourceType)
+        {
+            return sourceType switch {
+                "c"   => "CC",
+                "asm" => "AS",
+                "cpp" => "CXX",
+                _ => "CC",
+            };
+        }
+
         struct CompilerLogData
         {
             public string logTxt;
@@ -4559,7 +4629,7 @@ namespace unify_builder
 
                         if (ccLogQueue.TryTake(out CompilerLogData logData, 100))
                         {
-                            string compilerTag = logData.srcInfo.compilerType == "asm" ? "AS" : "CC";
+                            string compilerTag = getCompileLogTag(logData.srcInfo.sourceType);
                             string humanRdPath = toHumanReadablePath(logData.srcInfo.sourcePath);
 
                             // log progress
@@ -4870,7 +4940,7 @@ namespace unify_builder
 
             Func<CmdGenerator.CmdInfo, bool> AddToChangeList = (cmd) => {
 
-                switch (cmd.srcType)
+                switch (cmd.sourceType)
                 {
                     case "c":
                         res.cCount++;

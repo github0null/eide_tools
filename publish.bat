@@ -21,7 +21,7 @@ echo --- publish for win-x64 ---
 echo.
 dotnet publish ./eide_tools.sln -o %DIST_DIR%/win32/unify_builder^
                -c Release --no-self-contained^
-               --os win --arch x64^
+               -r win-x64^
                --framework net6.0^
                -p:PublishReadyToRun=true^
                /property:GenerateFullPaths=true^
@@ -34,7 +34,7 @@ echo --- publish for linux-x64 ---
 echo.
 dotnet publish ./eide_tools.sln -o %DIST_DIR%/linux/unify_builder^
                -c Release --no-self-contained^
-               --os linux --arch x64^
+               -r linux-x64^
                --framework net6.0^
                /property:GenerateFullPaths=true^
                /consoleloggerparameters:NoSummary
