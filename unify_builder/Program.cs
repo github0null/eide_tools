@@ -352,7 +352,7 @@ namespace unify_builder
         private readonly bool outDirTree;  // whether generate a tree struct in build folder
 
         private readonly string outDir; // output root folder
-        private readonly string binDir; // compiler root folder, like: 'c:\compiler_root', '/bin/gcc_root', '%COMPILER_ROOT%'
+        private readonly string binDir; // compiler root folder (with tail '/'), like: 'c:\compiler_root\', '/bin/gcc_root/', '%COMPILER_ROOT%'
         private readonly string cwd;    // project root folder
 
         private readonly string compilerAttr_commandPrefix;      // the compiler options prefix
@@ -2252,13 +2252,15 @@ namespace unify_builder
         static int rom_max_size = -1;
 
         static string dumpPath;
-        static string binDir;
+        static string toolchainRoot; // the compiler root dir
         static int reqThreadsNum;
         static JObject compilerModel;
         static JObject paramsObj;
         static string outDir;
         static string projectRoot;
-        static string builderDir;
+        static List<string> projectSysPaths = new(16);
+        static Dictionary<string, string> projectEnvs = new(16);
+        static string builderDir; // unify_builder.exe self dir
         static string paramsFilePath;
         static string refJsonName;
 
@@ -2573,7 +2575,7 @@ namespace unify_builder
                     paramsObj = JObject.Parse(paramsJson);
 
                     // load core params
-                    binDir = paramsObj["toolchainLocation"].Value<string>();
+                    toolchainRoot = paramsObj["toolchainLocation"].Value<string>();
                     string modelFilePath = paramsObj["toolchainCfgFile"].Value<string>();
 
                     // load compiler model
@@ -2596,7 +2598,7 @@ namespace unify_builder
                 projectRoot = paramsObj["rootDir"].Value<string>();
                 dumpPath = paramsObj["dumpPath"].Value<string>();
                 outDir = paramsObj["outDir"].Value<string>();
-                builderDir = Path.GetDirectoryName(appBaseDir);
+                builderDir = appBaseDir;
 
                 // init syspath
                 if (paramsObj.ContainsKey("sysPaths"))
@@ -2604,6 +2606,7 @@ namespace unify_builder
                     foreach (var path in paramsObj["sysPaths"].Values<string>())
                     {
                         setEnvVariable("PATH", path);
+                        projectSysPaths.Add(path);
                     }
                 }
 
@@ -2761,6 +2764,11 @@ namespace unify_builder
                         // add shell env
                         setEnvValue(envName, envValue);
 
+                        if (projectEnvs.ContainsKey(envName))
+                            projectEnvs[envName] = envValue;
+                        else
+                            projectEnvs.Add(envName, envValue);
+
                         // set cmd prefix
                         if (envName == "COMPILER_CMD_PREFIX" && !string.IsNullOrWhiteSpace(envValue))
                         {
@@ -2769,10 +2777,23 @@ namespace unify_builder
                     }
                 }
 
+                // for output makefile, force set 'useUnixPath' -> true
+                if (cliArgs.OutputMakefile)
+                {
+                    if (compilerModel.ContainsKey("useUnixPath"))
+                    {
+                        compilerModel["useUnixPath"] = true;
+                    }
+                    else
+                    {
+                        compilerModel.Add("useUnixPath", new JValue(true));
+                    }
+                }
+
                 // create command generator
                 CmdGenerator cmdGen = new(compilerModel, paramsObj, new CmdGenerator.GeneratorOption {
                     bindirEnvName = "%TOOL_DIR%",
-                    bindirAbsPath = binDir,
+                    bindirAbsPath = toolchainRoot,
                     outpath = outDir,
                     cwd = projectRoot,
                     testMode = checkMode(BuilderMode.DEBUG),
@@ -2947,10 +2968,10 @@ namespace unify_builder
                 }
 
                 // compiler path
-                var CC_PATH = binDir + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("c");
-                var AS_PATH = binDir + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("asm");
-                var CXX_PATH = binDir + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("cpp");
-                var LD_PATH = binDir + Path.DirectorySeparatorChar + cmdGen.getRawToolPath("linker");
+                var CC_PATH = toolchainRoot + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("c");
+                var AS_PATH = toolchainRoot + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("asm");
+                var CXX_PATH = toolchainRoot + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("cpp");
+                var LD_PATH = toolchainRoot + Path.DirectorySeparatorChar + cmdGen.getRawToolPath("linker");
 
                 // export compiler bin folder to PATH
                 var CC_DIR = Path.GetDirectoryName(CC_PATH);
@@ -3000,7 +3021,7 @@ namespace unify_builder
                 setEnvValue("BuilderFolder", builderDir);
                 setEnvValue("OutDir", outDir);
 
-                setEnvValue("ToolchainRoot", binDir);
+                setEnvValue("ToolchainRoot", toolchainRoot);
                 setEnvValue("CompilerPrefix", cmdGen.getToolPrefix());
                 setEnvValue("CompilerFolder", CC_DIR);
                 setEnvValue("CompilerId", cmdGen.getCompilerId().ToLower());
@@ -3012,7 +3033,7 @@ namespace unify_builder
                 addCliVar("re:ProjectRoot", ".");
                 addCliVar("re:BuilderFolder", Utility.toRelativePath(projectRoot, builderDir) ?? builderDir);
                 addCliVar("re:OutDir", Utility.toRelativePath(projectRoot, outDir) ?? outDir);
-                addCliVar("re:ToolchainRoot", Utility.toRelativePath(projectRoot, binDir) ?? binDir);
+                addCliVar("re:ToolchainRoot", Utility.toRelativePath(projectRoot, toolchainRoot) ?? toolchainRoot);
                 addCliVar("re:CompilerFolder", Utility.toRelativePath(projectRoot, CC_DIR) ?? CC_DIR);
 
                 if (checkMode(BuilderMode.DEBUG))
@@ -3054,19 +3075,19 @@ namespace unify_builder
                 }
 
                 // Check toolchain root folder
-                if (!Directory.Exists(binDir))
+                if (!Directory.Exists(toolchainRoot))
                 {
-                    throw new Exception("Not found toolchain directory !, [path] : \"" + binDir + "\"");
+                    throw new Exception("Not found toolchain directory !, [path] : \"" + toolchainRoot + "\"");
                 }
 
                 // set toolchain root env
                 try
                 {
-                    setEnvValue("TOOL_DIR", binDir);
+                    setEnvValue("TOOL_DIR", toolchainRoot);
                 }
                 catch (Exception e)
                 {
-                    throw new Exception("Set Environment Failed !, [path] : \"" + binDir + "\"", e);
+                    throw new Exception("Set Environment Failed !, [path] : \"" + toolchainRoot + "\"", e);
                 }
 
                 // switch to project root directory
@@ -3093,17 +3114,62 @@ namespace unify_builder
                         .AppendLine("#  all -> postbuild -> bin -> elf")
                         .AppendLine();
 
+                    // verbose mode
+                    makefileOutput
+                        .AppendLine("# Use 'make V=1' to see the full commands")
+                        .AppendLine("ifdef V")
+                        .AppendLine("\tQ = ")
+                        .AppendLine("else")
+                        .AppendLine("\tQ = @")
+                        .AppendLine("endif")
+                        .AppendLine();
+
+                    // color
+                    makefileOutput
+                        .AppendLine("COLOR_END=\"\\e[0m\"")
+                        .AppendLine("COLOR_ERR=\"\\e[31;1m\"")
+                        .AppendLine("COLOR_WRN=\"\\e[33;1m\"")
+                        .AppendLine("COLOR_SUC=\"\\e[32;1m\"")
+                        .AppendLine("COLOR_INF=\"\\e[34;1m\"")
+                        .AppendLine();
+
+                    // export env vars
+                    makefileOutput.AppendLine("# system environment variables");
+                    var sysPathList = new List<string>(16) {
+                        Utility.toUnixPath(Path.GetDirectoryName(CC_PATH)), // compiler bin folder
+                        Utility.toUnixPath(builderDir),                     // builder dir
+                    };
+                    sysPathList.AddRange(projectSysPaths.Select(p => Utility.toUnixPath(p)));
+                    // on Win32, conv 'C:\xxx' -> /C/xx for GNU make
+                    if (OsInfo.instance().OsType == "win32")
+                    {
+                        var drv_matcher = new Regex(@"^([a-zA-Z]):/", RegexOptions.Compiled);
+                        for (int i = 0; i < sysPathList.Count; i++)
+                            sysPathList[i] = drv_matcher.Replace(sysPathList[i], "/$1/");
+                    }
+                    makefileOutput
+                        .AppendLine($"TMP_PATH:=$(addprefix {string.Join(':', sysPathList)}:, $(PATH))")
+                        .AppendLine("export PATH=$(TMP_PATH)");
+                    makefileOutput.AppendLine("# project variables");
+                    foreach (var kv in projectEnvs)
+                    {
+                        if (kv.Key.ToLower() == "path") continue;
+                        if (kv.Key.StartsWith("SYS_")) continue; // skip eide platform vars, now is in Unix platform
+                        makefileOutput.AppendLine($"export {kv.Key}={Utility.toUnixPath(kv.Value)}");
+                    }
+                    makefileOutput.AppendLine();
+
                     // setup compiler
                     makefileCompilers.Add("CC",
-                        quotePath(Utility.toUnixPath(replaceEnvVariable(cmdGen.getActivedToolFullPath("c")))));
+                        quotePath(Utility.toUnixPath(CC_PATH)));
                     makefileCompilers.Add("AS",
-                        quotePath(Utility.toUnixPath(replaceEnvVariable(cmdGen.getActivedToolFullPath("asm")))));
+                        quotePath(Utility.toUnixPath(AS_PATH)));
                     makefileCompilers.Add("CXX",
-                        quotePath(Utility.toUnixPath(replaceEnvVariable(cmdGen.getActivedToolFullPath("cpp")))));
+                        quotePath(Utility.toUnixPath(CXX_PATH)));
                     makefileCompilers.Add("LD",
-                        quotePath(Utility.toUnixPath(replaceEnvVariable(cmdGen.getActivedToolFullPath("linker")))));
+                        quotePath(Utility.toUnixPath(LD_PATH)));
                     foreach (var item in makefileCompilers)
-                        makefileOutput.AppendLine($"{item.Key} := {item.Value}");
+                        makefileOutput.AppendLine($"{item.Key}={item.Value}");
                     makefileOutput.AppendLine();
 
                     // target: clean
@@ -3118,7 +3184,7 @@ namespace unify_builder
                     makefileOutput
                         .AppendLine("all: postbuild")
                         .AppendLine("\t@echo ==========")
-                        .AppendLine("\t@echo ALL DONE.")
+                        .AppendLine("\t@echo -e $(COLOR_SUC)\"ALL DONE.\"$(COLOR_END)")
                         .AppendLine("\t@echo ==========")
                         .AppendLine();
                 }
@@ -3303,17 +3369,17 @@ namespace unify_builder
                             dirRules.Add(targetDir);
                             makefileOutput
                                 .AppendLine($"{targetDir}:")
-                                .AppendLine($"\tmkdir -p $@");
+                                .AppendLine($"\t$(Q)mkdir -p $@");
                         }
 
                         var dep = Path.ChangeExtension(target, ".d");
                         var CC = quotePath(Utility.toUnixPath(replaceEnvVariable(mkinfo.exePath)));
+                        var title = item.Value.sourceType.StartsWith("asm") ? "assembling" : "compiling";
                         makefileOutput
                             .AppendLine($"-include {dep}")
                             .AppendLine($"{target}: {source} Makefile | {targetDir}")
-                            .AppendLine($"\t@echo compiling $< ...")
-                            .AppendLine($"\t{aliasMakefileCompiler(CC)} {mkinfo.sourceArgs}")
-                            .AppendLine($"\t@echo")
+                            .AppendLine($"\t@echo {title} $< ...")
+                            .AppendLine($"\t$(Q){aliasMakefileCompiler(CC)} {mkinfo.sourceArgs}")
                             .AppendLine();
                     }
                 }
@@ -3597,12 +3663,12 @@ namespace unify_builder
                     makefileOutput
                         .AppendLine($"objs = {string.Join(' ', objdeps)}")
                         .AppendLine("elf: $(objs) Makefile")
-                        .AppendLine($"\t@echo linking {elfpath} ...")
+                        .AppendLine($"\t@echo -e $(COLOR_INF)\"linking {elfpath} ...\"$(COLOR_END)")
                         .AppendLine($"\t{aliasMakefileCompiler(LD)} {linkInfo.sourceArgs}");
 
                     if (extraLinkCmds.Length > 0)
                     {
-                        makefileOutput.AppendLine($"\t@echo execute extra link command ...");
+                        makefileOutput.AppendLine($"\t@echo -e $(COLOR_INF)\"execute extra link command ...\"$(COLOR_END)");
 
                         foreach (var cmd in extraLinkCmds)
                         {
@@ -3613,7 +3679,6 @@ namespace unify_builder
                     }
 
                     makefileOutput
-                        .AppendLine($"\t@echo")
                         .AppendLine();
                 }
 
@@ -3802,7 +3867,7 @@ namespace unify_builder
 
                     if (commandList != null && commandList.Length > 0)
                     {
-                        makefileOutput.AppendLine($"\t@echo output bin files ...");
+                        makefileOutput.AppendLine($"\t@echo -e $(COLOR_INF)\"make bin files ...\"$(COLOR_END)");
 
                         foreach (var cmd in commandList)
                         {
@@ -3810,9 +3875,7 @@ namespace unify_builder
                             makefileOutput
                                 .AppendLine($"\t{aliasMakefileCompiler(exePath)} {cmd.commandLine}");
                         }
-                        makefileOutput
-                            .AppendLine($"\t@echo")
-                            .AppendLine();
+                        makefileOutput.AppendLine();
                     }
                 }
 
@@ -4940,9 +5003,13 @@ namespace unify_builder
                     if (cliArgs.OutputMakefile)
                     {
                         if (fieldName == "beforeBuildTasks")
-                            makefileOutput.AppendLine("prebuild:");
+                            makefileOutput
+                                .AppendLine("prebuild:")
+                                .AppendLine("\t@echo -e $(COLOR_INF)\"prebuild ...\"$(COLOR_END)");
                         else
-                            makefileOutput.AppendLine("postbuild: bin");
+                            makefileOutput
+                                .AppendLine("postbuild: bin")
+                                .AppendLine("\t@echo -e $(COLOR_INF)\"postbuild ...\"$(COLOR_END)");
                     }
 
                     if (taskList.Count == 0)
@@ -5043,7 +5110,8 @@ namespace unify_builder
 
                         if (cliArgs.OutputMakefile)
                         {
-                            makefileOutput.AppendLine("\t" + command);
+                            var win32env_matcher = new Regex(@"%(\w+)%");
+                            makefileOutput.AppendLine("\t" + win32env_matcher.Replace(command, "$($1)"));
                         }
 
                         // run command
