@@ -990,7 +990,8 @@ namespace unify_builder
                     if (File.Exists(bundledFullOutPath)) File.Delete(bundledFullOutPath);
 
                     // make bundled lib
-                    int exitCode = Program.runExe(toAbsToolPath(getRawToolPath("linker-lib")), cliStr, out string log);
+                    int exitCode = Program.runExe(toAbsToolPath(getRawToolPath("linker-lib")), cliStr,
+                        out string log, null, Program.cliArgs.DryRun);
                     if (exitCode != Program.CODE_DONE)
                         throw new Exception("bundled lib file failed, exit code: " + exitCode + ", msg: " + log);
 
@@ -2270,7 +2271,7 @@ namespace unify_builder
 
         static HashSet<BuilderMode> modeList = new();
 
-        static Options cliArgs = null;
+        public static Options cliArgs = null;
         static StringBuilder makefileOutput = new(4096);
         static Dictionary<string, string> makefileCompilers = new(8);
 
@@ -2384,6 +2385,9 @@ namespace unify_builder
 
             [Option("out-makefile", Required = false, HelpText = "generate GNU Makefile when build")]
             public bool OutputMakefile { get; set; }
+
+            [Option("dry-run", Required = false, HelpText = "dry run mode. Don't realy do compile")]
+            public bool DryRun { get; set; }
         }
 
         // linux VT100 color
@@ -3130,7 +3134,10 @@ namespace unify_builder
 
                 // prepare build
                 infoWithLable("", false);
-                info("start building at " + time.ToString("yyyy-MM-dd HH:mm:ss") + "\r\n");
+                if (cliArgs.DryRun)
+                    warn($"dry run at {time.ToString("yyyy-MM-dd HH:mm:ss")}\r\n");
+                else
+                    info($"start building at {time.ToString("yyyy-MM-dd HH:mm:ss")}\r\n");
 
                 // print toolchain name and version
                 infoWithLable(cmdGen.compilerFullName + "\r\n", true, "TOOL");
@@ -3412,7 +3419,8 @@ namespace unify_builder
 
                         if (string.IsNullOrEmpty(cmdInfo.argsForSplitter)) // normal compile
                         {
-                            exitCode = runExe(cmdInfo.exePath, cmdInfo.commandLine, out string ccOut, cmdInfo.outputEncoding);
+                            exitCode = runExe(cmdInfo.exePath, cmdInfo.commandLine,
+                                out string ccOut, cmdInfo.outputEncoding, cliArgs.DryRun);
                             ccLog = ccOut.Trim();
                         }
                         else // use source splitter
@@ -3429,7 +3437,7 @@ namespace unify_builder
                                 argsLi.Select(str => str.Contains(' ') ? ("\"" + str + "\"") : str).ToArray());
 
                             exitCode = runExe(sdcc_asm_optimizer, exeArgs, out string __,
-                                out string resOut, out string ccOut, cmdInfo.outputEncoding);
+                                out string resOut, out string ccOut, cmdInfo.outputEncoding, cliArgs.DryRun);
                             ccLog = ccOut.Trim();
 
                             // parse and set obj list
@@ -3484,8 +3492,11 @@ namespace unify_builder
                 // because link operation will always execute, but compilaion not
                 try
                 {
-                    string oldParmasPath = paramsFilePath + ".old";
-                    File.WriteAllText(oldParmasPath, File.ReadAllText(paramsFilePath));
+                    if (!cliArgs.DryRun)
+                    {
+                        string oldParmasPath = paramsFilePath + ".old";
+                        File.WriteAllText(oldParmasPath, File.ReadAllText(paramsFilePath));
+                    }
                 }
                 catch (Exception)
                 {
@@ -3543,7 +3554,8 @@ namespace unify_builder
 
                 CmdGenerator.CmdInfo linkInfo = cmdGen.genLinkCommand(allObjs.ToArray());
 
-                int linkerExitCode = runExe(linkInfo.exePath, linkInfo.commandLine, out string linkerOut, linkInfo.outputEncoding);
+                int linkerExitCode = runExe(linkInfo.exePath, linkInfo.commandLine,
+                    out string linkerOut, linkInfo.outputEncoding, cliArgs.DryRun);
 
                 if (!string.IsNullOrEmpty(linkerOut.Trim()))
                 {
@@ -3563,7 +3575,7 @@ namespace unify_builder
                 foreach (CmdGenerator.LinkerExCmdInfo extraLinkerCmd in extraLinkCmds)
                 {
                     if (runExe(extraLinkerCmd.exePath, extraLinkerCmd.commandLine,
-                        out string cmdOutput, extraLinkerCmd.outputEncoding) == CODE_DONE)
+                        out string cmdOutput, extraLinkerCmd.outputEncoding, cliArgs.DryRun) == CODE_DONE)
                     {
                         log("\r\n>> " + extraLinkerCmd.title);
 
@@ -3750,7 +3762,7 @@ namespace unify_builder
                             }
 
                             // must use 'cmd', because SDCC has '>' command
-                            int eCode = runShellCommand(task_command, out string _exe_log);
+                            int eCode = runShellCommand(task_command, out string _exe_log, null, cliArgs.DryRun);
                             exeLog = _exe_log;
 
                             if (eCode > ERR_LEVEL)
@@ -4611,15 +4623,24 @@ namespace unify_builder
             return "[" + progress + "%]";
         }
 
-        public static int runExe(string filename, string args, out string output_,
-            Encoding encoding = null)
+        public static int runExe(string exe, string args, out string output_, Encoding encoding = null, bool dryRun = false)
         {
-            return runExe(filename, args, out output_, out string _, out string __, encoding);
+            return runExe(exe, args, out output_, out string _, out string __, encoding, dryRun);
         }
 
-        public static int runExe(string filename, string args, out string output_,
-            out string stdOut_, out string stdErr_, Encoding encoding = null)
+        public static int runExe(
+            string filename, string args,
+            out string output_, out string stdOut_, out string stdErr_,
+            Encoding encoding = null, bool dryRun = false)
         {
+            if (dryRun)
+            {
+                output_ = "";
+                stdOut_ = "";
+                stdErr_ = "";
+                return 0;
+            }
+
             // if executable is 'cmd.exe', force use ascii
             if (filename == "cmd" ||
                 filename == "cmd.exe")
@@ -4680,7 +4701,7 @@ namespace unify_builder
             return exitCode;
         }
 
-        public static int runShellCommand(string command, out string _output, Encoding encoding = null)
+        public static int runShellCommand(string command, out string _output, Encoding encoding = null, bool dryRun = false)
         {
             string filename;
             string args;
@@ -4696,7 +4717,7 @@ namespace unify_builder
                 args = "-c \"" + command + "\"";
             }
 
-            return runExe(filename, args, out _output, encoding);
+            return runExe(filename, args, out _output, encoding, dryRun);
         }
 
         static string[] parseSourceSplitterOutput(string log)
@@ -4816,7 +4837,7 @@ namespace unify_builder
                     {
                         exitCode = runExe(
                             ccArgs.exePath, ccArgs.commandLine,
-                            out string output, ccArgs.outputEncoding);
+                            out string output, ccArgs.outputEncoding, cliArgs.DryRun);
 
                         cclog = output.Trim();
                     }
@@ -4834,7 +4855,7 @@ namespace unify_builder
                             argsLi.Select(str => str.Contains(' ') ? ("\"" + str + "\"") : str).ToArray());
 
                         exitCode = runExe(sdcc_asm_optimizer, exeArgs, out string __,
-                            out string resultOut, out string ccOut, ccArgs.outputEncoding);
+                            out string resultOut, out string ccOut, ccArgs.outputEncoding, cliArgs.DryRun);
 
                         cclog = ccOut.Trim();
 
@@ -5026,7 +5047,7 @@ namespace unify_builder
                         }
 
                         // run command
-                        if (runShellCommand(command, out string cmdStdout) == CODE_DONE)
+                        if (runShellCommand(command, out string cmdStdout, null, cliArgs.DryRun) == CODE_DONE)
                         {
                             success("[done]");
                             if (!string.IsNullOrEmpty(cmdStdout.Trim()))
