@@ -298,6 +298,8 @@ namespace unify_builder
             public string shellCommand;     // [optional] shell command which will be invoke compiler, used to gen 'compile_commands.json'
             public string[] outputs;        // [optional] if output more than one files, use this field
             public string argsForSplitter;  // [optional] compiler args for 'source_splitter' tool
+
+            public string sdcc_bundleLibArgs; // [specific] just for SDCC compiler
         };
 
         public class LinkerExCmdInfo : CmdInfo
@@ -352,7 +354,7 @@ namespace unify_builder
         private readonly bool outDirTree;  // whether generate a tree struct in build folder
 
         private readonly string outDir; // output root folder
-        private readonly string binDir; // compiler root folder (with tail '/'), like: 'c:\compiler_root\', '/bin/gcc_root/', '%COMPILER_ROOT%'
+        private readonly string binDir; // compiler root folder (with tail '/'), default: '%TOOL_DIR%/'
         private readonly string cwd;    // project root folder
 
         private readonly string compilerAttr_commandPrefix;      // the compiler options prefix
@@ -377,6 +379,7 @@ namespace unify_builder
             model = cModel;
             parameters = cParams;
             outDir = option.outpath;
+            // 注意：为什么不将变量 %TOOL_DIR% 替换为实际的值？历史原因，某些情况下使用cmd执行命令，使用环境变量可以避免路径超出长度
             binDir = option.bindirEnvName != null ? (option.bindirEnvName + Path.DirectorySeparatorChar) : "";
             cwd = option.cwd;
             compilerAttr_commandPrefix = option.compiler_prefix;
@@ -936,6 +939,7 @@ namespace unify_builder
             // For SDCC, bundled *.rel files as a *.lib file
             // ref: https://sourceforge.net/p/sdcc/discussion/1865/thread/e395ff7a42/#a03e
             // cmd: sdar -rcv ${out} ${in}
+            string sdcc_bundleLibArgs = null;
             if (!cliTestMode && compilerId == "SDCC" && checkEntryOrderForSdcc)
             {
                 List<string> sourcesObjs = new(objList);
@@ -990,7 +994,8 @@ namespace unify_builder
                     if (File.Exists(bundledFullOutPath)) File.Delete(bundledFullOutPath);
 
                     // make bundled lib
-                    int exitCode = Program.runExe(toAbsToolPath(getRawToolPath("linker-lib")), cliStr,
+                    sdcc_bundleLibArgs = cliStr;
+                    int exitCode = Program.runExe(getOtherUtilToolFullPath("linker-lib"), cliStr,
                         out string log, null, Program.cliArgs.DryRun);
                     if (exitCode != Program.CODE_DONE)
                         throw new Exception("bundled lib file failed, exit code: " + exitCode + ", msg: " + log);
@@ -1243,7 +1248,8 @@ namespace unify_builder
                 sourceType = "other",
                 sourceArgs = linkerRealArgs,
                 outPath = outPath,
-                outputEncoding = encodings["linker"]
+                outputEncoding = encodings["linker"],
+                sdcc_bundleLibArgs = sdcc_bundleLibArgs
             };
         }
 
@@ -1336,21 +1342,55 @@ namespace unify_builder
             return cwd + Path.DirectorySeparatorChar + path;
         }
 
-        private string toAbsToolPath(string rawToolPath)
+        /// <summary>
+        /// 将一个编译工具的相对路径转换为带有 编译器根目录变量 的绝对路径
+        /// </summary>
+        /// <param name="repath">相对路径</param>
+        /// <returns>路径字符串，比如：%TOOL_DIR%\bin\gcc.exe</returns>
+        private string toAbsToolPath(string repath)
         {
-            return binDir + rawToolPath.Replace("${toolPrefix}", toolPrefix);
+            return binDir + repath.Replace("${toolPrefix}", toolPrefix);
         }
 
-        public string getRawToolPath(string name)
+        /// <summary>
+        /// 获取model中的其他工具的绝对路径，比如 ar.exe (linker-lib)
+        /// </summary>
+        /// <remarks></remarks>
+        /// <param name="name">工具的代号，比如：linker-lib</param>
+        /// <returns>路径字符串（路径中的所有变量已被替换），比如：c:\aa\bb\cc\bin\ar.exe</returns>
+        public string getOtherUtilToolFullPath(string name)
         {
-            return model["groups"][name]["$path"].Value<string>().Replace("${toolPrefix}", toolPrefix);
+            string path = model["groups"][name]["$path"].Value<string>()
+                .Replace("${toolPrefix}", toolPrefix);
+            return Program.replaceEnvVariable(binDir + path);
         }
 
+        /// <summary>
+        /// 检查model中是否存在某个编译工具
+        /// </summary>
+        /// <remarks>不要去检查 c, cpp, asm, linker 是否存在，这些是必选的工具，一定是存在的</remarks>
+        /// <param name="name"></param>
+        /// <returns>是否存在</returns>
+        public bool hasOtherUtilTool(string name)
+        {
+            return ((JObject)model["groups"]).ContainsKey(name);
+        }
+
+        /// <summary>
+        /// 获取当前活动的编译工具路径
+        /// </summary>
+        /// <param name="name">可选的值有：c, cpp, asm, linker, 对于某些工具链可能存在 asm-xxx, c-xxx 等变体</param>
+        /// <returns>返回一个相对于编译器根目录的路径（路径中的变量已被替换），比如：bin\arm-none-eabi.exe</returns>
         public string getActivedRawToolPath(string name)
         {
             return models[name]["$path"].Value<string>();
         }
-
+        /// <summary>
+        /// 获取当前活动的编译工具带有编译器根目录变量的完整路径
+        /// </summary>
+        /// <param name="name">可选的值有：c, cpp, asm, linker, 对于某些工具链可能存在 asm-xxx, c-xxx 等变体</param>
+        /// <returns>路径字符串，比如：%TOOL_DIR%\bin\arm-none-eabi.exe</returns>
+        /// <remarks>为什么不将变量 %TOOL_DIR% 替换为实际的值？历史原因，某些情况下使用cmd执行命令，使用环境变量可以避免路径超出长度</remarks>
         public string getActivedToolFullPath(string name)
         {
             return binDir + getActivedRawToolPath(name);
@@ -2777,6 +2817,16 @@ namespace unify_builder
                     }
                 }
 
+                // set toolchain root env
+                try
+                {
+                    setEnvValue("TOOL_DIR", toolchainRoot);
+                }
+                catch (Exception e)
+                {
+                    throw new Exception("Set Environment Failed !, [path] : \"" + toolchainRoot + "\"", e);
+                }
+
                 // for output makefile, force set 'useUnixPath' -> true
                 if (cliArgs.OutputMakefile)
                 {
@@ -2971,7 +3021,9 @@ namespace unify_builder
                 var CC_PATH = toolchainRoot + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("c");
                 var AS_PATH = toolchainRoot + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("asm");
                 var CXX_PATH = toolchainRoot + Path.DirectorySeparatorChar + cmdGen.getActivedRawToolPath("cpp");
-                var LD_PATH = toolchainRoot + Path.DirectorySeparatorChar + cmdGen.getRawToolPath("linker");
+                // 注意：当处于 lib 生成模式时，最终被使用的 linker 实际是 ar.exe
+                // 但 LD_PATH 代表 ld 的路径，因此我们需要获取原始的linker的路径
+                var LD_PATH = cmdGen.getOtherUtilToolFullPath("linker");
 
                 // export compiler bin folder to PATH
                 var CC_DIR = Path.GetDirectoryName(CC_PATH);
@@ -3080,16 +3132,6 @@ namespace unify_builder
                     throw new Exception("Not found toolchain directory !, [path] : \"" + toolchainRoot + "\"");
                 }
 
-                // set toolchain root env
-                try
-                {
-                    setEnvValue("TOOL_DIR", toolchainRoot);
-                }
-                catch (Exception e)
-                {
-                    throw new Exception("Set Environment Failed !, [path] : \"" + toolchainRoot + "\"", e);
-                }
-
                 // switch to project root directory
                 switchWorkDir(projectRoot);
 
@@ -3168,6 +3210,12 @@ namespace unify_builder
                         quotePath(Utility.toUnixPath(CXX_PATH)));
                     makefileCompilers.Add("LD",
                         quotePath(Utility.toUnixPath(LD_PATH)));
+                    if (cmdGen.hasOtherUtilTool("linker-lib"))
+                    {
+                        makefileCompilers.Add("AR",
+                            quotePath(Utility.toUnixPath(cmdGen.getOtherUtilToolFullPath("linker-lib"))));
+                    }
+
                     foreach (var item in makefileCompilers)
                         makefileOutput.AppendLine($"{item.Key}={item.Value}");
                     makefileOutput.AppendLine();
@@ -3663,8 +3711,14 @@ namespace unify_builder
                     makefileOutput
                         .AppendLine($"objs = {string.Join(' ', objdeps)}")
                         .AppendLine("elf: $(objs) Makefile")
-                        .AppendLine($"\t@echo -e $(COLOR_INF)\"linking {elfpath} ...\"$(COLOR_END)")
-                        .AppendLine($"\t{aliasMakefileCompiler(LD)} {linkInfo.sourceArgs}");
+                        .AppendLine($"\t@echo -e $(COLOR_INF)\"linking {elfpath} ...\"$(COLOR_END)");
+
+                    if (cmdGen.getCompilerId() == "SDCC" && linkInfo.sdcc_bundleLibArgs != null)
+                    {
+                        makefileOutput.AppendLine($"\t$(AR) {linkInfo.sdcc_bundleLibArgs}");
+                    }
+
+                    makefileOutput.AppendLine($"\t{aliasMakefileCompiler(LD)} {linkInfo.sourceArgs}");
 
                     if (extraLinkCmds.Length > 0)
                     {
