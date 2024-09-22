@@ -1192,6 +1192,7 @@ namespace unify_builder
             File.WriteAllText(objliFile.FullName, string.Join(objSep, objList.ToArray()), encodings["linker"]);
 
             FileInfo paramFile = new(outName + ".lnp");
+            var linkerRealArgs = cmdLine.Replace("\r\n", " ").Replace("\n", " ");
             File.WriteAllText(paramFile.FullName, cmdLine, encodings["linker"]);
 
             string commandLine = null;
@@ -1239,6 +1240,7 @@ namespace unify_builder
                 commandLine = commandLine,
                 sourcePath = mapPath,
                 sourceType = "other",
+                sourceArgs = linkerRealArgs,
                 outPath = outPath,
                 outputEncoding = encodings["linker"]
             };
@@ -1928,7 +1930,7 @@ namespace unify_builder
             return Utility.toLocalPath(path, compilerAttr_directorySeparator);
         }
 
-        private string toRelativePathForCompilerArgs(string path, bool quote = true, bool addDotPrefix = true)
+        public string toRelativePathForCompilerArgs(string path, bool quote = true, bool addDotPrefix = true)
         {
             if (cwd != null)
             {
@@ -2268,6 +2270,10 @@ namespace unify_builder
 
         static HashSet<BuilderMode> modeList = new();
 
+        static Options cliArgs = null;
+        static StringBuilder makefileOutput = new(4096);
+        static Dictionary<string, string> makefileCompilers = new(8);
+
         enum BuilderMode
         {
             NORMAL = 0,
@@ -2375,6 +2381,9 @@ namespace unify_builder
 
             [Option("use-ccache", Required = false, HelpText = "use ccache speed up compilation")]
             public bool UseCcache { get; set; }
+
+            [Option("out-makefile", Required = false, HelpText = "generate GNU Makefile when build")]
+            public bool OutputMakefile { get; set; }
         }
 
         // linux VT100 color
@@ -2388,8 +2397,6 @@ namespace unify_builder
         public static extern IntPtr GetStdHandle(int handle);
         static int Main(string[] args_)
         {
-            Options cliArgs = null;
-
             //
             // parse cli args
             //
@@ -3061,6 +3068,57 @@ namespace unify_builder
                 // switch to project root directory
                 switchWorkDir(projectRoot);
 
+                if (cliArgs.OutputMakefile)
+                {
+                    var builderVersion = Assembly.GetExecutingAssembly().GetName().Version;
+                    makefileOutput
+                        .AppendLine("#################################################################")
+                        .AppendLine($"# AUTO GENERATE AT {DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")} BY unify_builder v{builderVersion}")
+                        .AppendLine("#################################################################")
+                        .AppendLine();
+
+                    var outpath = Utility.toRelativePath(projectRoot, outDir, true);
+
+                    // dump informations
+                    makefileOutput
+                        .AppendLine("# Usage:")
+                        .AppendLine("#  1. make prebuild")
+                        .AppendLine("#  2. make all")
+                        .AppendLine()
+                        .AppendLine("# Targets Dependences Chain:")
+                        .AppendLine("#  all -> postbuild -> bin -> elf")
+                        .AppendLine();
+
+                    // setup compiler
+                    makefileCompilers.Add("CC",
+                        quotePath(Utility.toUnixPath(replaceEnvVariable(cmdGen.getActivedToolFullPath("c")))));
+                    makefileCompilers.Add("AS",
+                        quotePath(Utility.toUnixPath(replaceEnvVariable(cmdGen.getActivedToolFullPath("asm")))));
+                    makefileCompilers.Add("CXX",
+                        quotePath(Utility.toUnixPath(replaceEnvVariable(cmdGen.getActivedToolFullPath("cpp")))));
+                    makefileCompilers.Add("LD",
+                        quotePath(Utility.toUnixPath(replaceEnvVariable(cmdGen.getActivedToolFullPath("linker")))));
+                    foreach (var item in makefileCompilers)
+                        makefileOutput.AppendLine($"{item.Key} := {item.Value}");
+                    makefileOutput.AppendLine();
+
+                    // target: clean
+                    makefileOutput
+                        .AppendLine(".PHONY : all postbuild bin elf prebuild clean")
+                        .AppendLine("clean:")
+                        .AppendLine($"\t-rm -rfv ./{outpath}/*")
+                        .AppendLine($"\t-rm -rfv ./{outpath}/.obj")
+                        .AppendLine();
+
+                    // target: all
+                    makefileOutput
+                        .AppendLine("all: postbuild")
+                        .AppendLine("\t@echo ==========")
+                        .AppendLine("\t@echo ALL DONE.")
+                        .AppendLine("\t@echo ==========")
+                        .AppendLine();
+                }
+
                 // run tasks before build
                 if (runTasks("PRE-BUILD TASKS", "beforeBuildTasks") != CODE_DONE)
                 {
@@ -3220,6 +3278,37 @@ namespace unify_builder
                 catch (Exception)
                 {
                     // do nothings
+                }
+
+                if (cliArgs.OutputMakefile)
+                {
+                    HashSet<string> dirRules = new(512);
+
+                    foreach (var item in commands)
+                    {
+                        var source = cmdGen.toRelativePathForCompilerArgs(item.Key);
+                        var mkinfo = item.Value;
+
+                        var target = cmdGen.toRelativePathForCompilerArgs(mkinfo.outPath);
+                        var targetDir = Utility.toUnixPath(Path.GetDirectoryName(target));
+                        if (!dirRules.Contains(targetDir))
+                        {
+                            dirRules.Add(targetDir);
+                            makefileOutput
+                                .AppendLine($"{targetDir}:")
+                                .AppendLine($"\tmkdir -p $@");
+                        }
+
+                        var dep = Path.ChangeExtension(target, ".d");
+                        var CC = quotePath(Utility.toUnixPath(replaceEnvVariable(mkinfo.exePath)));
+                        makefileOutput
+                            .AppendLine($"-include {dep}")
+                            .AppendLine($"{target}: {source} Makefile | {targetDir}")
+                            .AppendLine($"\t@echo compiling $< ...")
+                            .AppendLine($"\t{aliasMakefileCompiler(CC)} {mkinfo.sourceArgs}")
+                            .AppendLine($"\t@echo")
+                            .AppendLine();
+                    }
                 }
 
                 /* use incremental mode */
@@ -3470,7 +3559,8 @@ namespace unify_builder
                 }
 
                 // execute extra command
-                foreach (CmdGenerator.LinkerExCmdInfo extraLinkerCmd in cmdGen.genLinkerExtraCommand(linkInfo.outPath))
+                var extraLinkCmds = cmdGen.genLinkerExtraCommand(linkInfo.outPath);
+                foreach (CmdGenerator.LinkerExCmdInfo extraLinkerCmd in extraLinkCmds)
                 {
                     if (runExe(extraLinkerCmd.exePath, extraLinkerCmd.commandLine,
                         out string cmdOutput, extraLinkerCmd.outputEncoding) == CODE_DONE)
@@ -3483,6 +3573,36 @@ namespace unify_builder
 
                         log("\r\n" + cmdOutput, false);
                     }
+                }
+
+                if (cliArgs.OutputMakefile)
+                {
+                    var objdeps = allObjs.Select(p => cmdGen.toRelativePathForCompilerArgs(p));
+                    var elfpath = cmdGen.toRelativePathForCompilerArgs(linkInfo.outPath);
+
+                    // target: elf
+                    var LD = quotePath(Utility.toUnixPath(replaceEnvVariable(linkInfo.exePath)));
+                    makefileOutput
+                        .AppendLine($"objs = {string.Join(' ', objdeps)}")
+                        .AppendLine("elf: $(objs) Makefile")
+                        .AppendLine($"\t@echo linking {elfpath} ...")
+                        .AppendLine($"\t{aliasMakefileCompiler(LD)} {linkInfo.sourceArgs}");
+
+                    if (extraLinkCmds.Length > 0)
+                    {
+                        makefileOutput.AppendLine($"\t@echo execute extra link command ...");
+
+                        foreach (var cmd in extraLinkCmds)
+                        {
+                            var exePath = quotePath(Utility.toUnixPath(replaceEnvVariable(cmd.exePath)));
+                            makefileOutput
+                                .AppendLine($"\t{exePath} {cmd.commandLine}");
+                        }
+                    }
+
+                    makefileOutput
+                        .AppendLine($"\t@echo")
+                        .AppendLine();
                 }
 
                 // print map content by filter, calcu ram/rom usage
@@ -3664,6 +3784,26 @@ namespace unify_builder
                     }
                 }
 
+                if (cliArgs.OutputMakefile)
+                {
+                    makefileOutput.AppendLine($"bin: elf Makefile");
+
+                    if (commandList != null && commandList.Length > 0)
+                    {
+                        makefileOutput.AppendLine($"\t@echo output bin files ...");
+
+                        foreach (var cmd in commandList)
+                        {
+                            var exePath = quotePath(Utility.toUnixPath(replaceEnvVariable(cmd.exePath)));
+                            makefileOutput
+                                .AppendLine($"\t{aliasMakefileCompiler(exePath)} {cmd.commandLine}");
+                        }
+                        makefileOutput
+                            .AppendLine($"\t@echo")
+                            .AppendLine();
+                    }
+                }
+
                 // reset work directory
                 resetWorkDir();
 
@@ -3710,6 +3850,13 @@ namespace unify_builder
             catch (Exception err)
             {
                 errorWithLable(err.Message + "\r\n");
+            }
+
+            if (cliArgs.OutputMakefile)
+            {
+                File.WriteAllText(
+                    projectRoot + Path.DirectorySeparatorChar + "Makefile",
+                    makefileOutput.ToString());
             }
 
             // close and unlock log file
@@ -4769,8 +4916,20 @@ namespace unify_builder
                 {
                     JArray taskList = (JArray)options[fieldName];
 
+                    if (cliArgs.OutputMakefile)
+                    {
+                        if (fieldName == "beforeBuildTasks")
+                            makefileOutput.AppendLine("prebuild:");
+                        else
+                            makefileOutput.AppendLine("postbuild: bin");
+                    }
+
                     if (taskList.Count == 0)
                     {
+                        if (fieldName == "beforeBuildTasks")
+                            makefileOutput.AppendLine("\t@echo nothing to prebuild.").AppendLine();
+                        else
+                            makefileOutput.AppendLine("\t@echo nothing to postbuild.").AppendLine();
                         return CODE_DONE;
                     }
 
@@ -4861,6 +5020,11 @@ namespace unify_builder
                             }
                         }
 
+                        if (cliArgs.OutputMakefile)
+                        {
+                            makefileOutput.AppendLine("\t" + command);
+                        }
+
                         // run command
                         if (runShellCommand(command, out string cmdStdout) == CODE_DONE)
                         {
@@ -4885,6 +5049,11 @@ namespace unify_builder
                                 && cmd["abortAfterFailed"].Value<bool>())
                                 break;
                         }
+                    }
+
+                    if (cliArgs.OutputMakefile)
+                    {
+                        makefileOutput.AppendLine();
                     }
 
                     log(""); // empty line
@@ -5257,6 +5426,23 @@ namespace unify_builder
                     jArr.Add(rootDir + Path.DirectorySeparatorChar + _path);
                 }
             }
+        }
+
+        static string quotePath(string path)
+        {
+            if (path.Contains(' ') && !path.StartsWith('"'))
+                return $"\"{path}\"";
+            return path;
+        }
+
+        static string aliasMakefileCompiler(string compilerFullPath)
+        {
+            foreach (var item in makefileCompilers)
+            {
+                if (item.Value == compilerFullPath)
+                    return $"$({item.Key})";
+            }
+            return compilerFullPath;
         }
 
         //////////////////////////////////////////////////
