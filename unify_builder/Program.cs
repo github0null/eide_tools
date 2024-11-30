@@ -3244,7 +3244,8 @@ namespace unify_builder
                     // target: clean
                     makefileOutput
                         .AppendLine("clean:")
-                        .AppendLine($"\t-rm -rfv ./{outpath}/*")
+                        .AppendLine($"\t-rm -fv ./{outpath}/*.elf ./{outpath}/*.axf ./{outpath}/*.out")
+                        .AppendLine($"\t-rm -fv ./{outpath}/*.hex ./{outpath}/*.bin ./{outpath}/*.s19")
                         .AppendLine($"\t-rm -rfv ./{outpath}/.obj")
                         .AppendLine();
                 }
