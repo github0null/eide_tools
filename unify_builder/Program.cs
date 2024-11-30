@@ -2315,6 +2315,7 @@ namespace unify_builder
 
         public static Options cliArgs = null;
         static StringBuilder makefileOutput = new(4096);
+        static string makefileToolchainRoot = "";
         static Dictionary<string, string> makefileCompilers = new(8);
 
         enum BuilderMode
@@ -3149,11 +3150,11 @@ namespace unify_builder
                     // dump informations
                     makefileOutput
                         .AppendLine("# Usage:")
-                        .AppendLine("#  1. make prebuild")
-                        .AppendLine("#  2. make all")
+                        .AppendLine("#  - Build:\tmake")
+                        .AppendLine("#  - Clean:\tmake clean")
                         .AppendLine()
                         .AppendLine("# Targets Dependences Chain:")
-                        .AppendLine("#  all -> postbuild -> bin -> elf")
+                        .AppendLine("#  all -> postbuild -> bin -> elf -> prebuild, *.o ...")
                         .AppendLine();
 
                     // verbose mode
@@ -3176,7 +3177,7 @@ namespace unify_builder
                         .AppendLine();
 
                     // export env vars
-                    makefileOutput.AppendLine("# system environment variables");
+                    makefileOutput.AppendLine("# System Environment Variables");
                     var sysPathList = new List<string>(16) {
                         Utility.toUnixPath(Path.GetDirectoryName(CC_PATH)), // compiler bin folder
                         Utility.toUnixPath(builderDir),                     // builder dir
@@ -3192,12 +3193,18 @@ namespace unify_builder
                     makefileOutput
                         .AppendLine($"TMP_PATH:=$(addprefix {string.Join(':', sysPathList)}:, $(PATH))")
                         .AppendLine("export PATH=$(TMP_PATH)");
-                    makefileOutput.AppendLine("# project variables");
+                    makefileOutput
+                        .AppendLine("# Project Variables")
+                        .AppendLine("#  - These variables may be used by \'prebuild\' or \'postbuild\' target.");
                     foreach (var kv in projectEnvs)
                     {
                         if (kv.Key.ToLower() == "path") continue;
                         if (kv.Key.StartsWith("SYS_")) continue; // skip eide platform vars, now is in Unix platform
                         makefileOutput.AppendLine($"export {kv.Key}={Utility.toUnixPath(kv.Value)}");
+                        if (kv.Key == "ToolchainRoot") 
+                        {
+                            makefileToolchainRoot = Utility.toUnixPath(kv.Value);
+                        }
                     }
                     makefileOutput.AppendLine();
 
@@ -3216,16 +3223,14 @@ namespace unify_builder
                             quotePath(Utility.toUnixPath(cmdGen.getOtherUtilToolFullPath("linker-lib"))));
                     }
 
+                    makefileOutput.AppendLine($"COMPILER_DIR={makefileToolchainRoot}");
                     foreach (var item in makefileCompilers)
-                        makefileOutput.AppendLine($"{item.Key}={item.Value}");
+                        makefileOutput.AppendLine($"{item.Key}={item.Value.Replace(makefileToolchainRoot, "$(COMPILER_DIR)")}");
                     makefileOutput.AppendLine();
 
-                    // target: clean
+                    // PHONY target
                     makefileOutput
                         .AppendLine(".PHONY : all postbuild bin elf prebuild clean")
-                        .AppendLine("clean:")
-                        .AppendLine($"\t-rm -rfv ./{outpath}/*")
-                        .AppendLine($"\t-rm -rfv ./{outpath}/.obj")
                         .AppendLine();
 
                     // target: all
@@ -3234,6 +3239,13 @@ namespace unify_builder
                         .AppendLine("\t@echo ==========")
                         .AppendLine("\t@echo -e $(COLOR_SUC)\"ALL DONE.\"$(COLOR_END)")
                         .AppendLine("\t@echo ==========")
+                        .AppendLine();
+
+                    // target: clean
+                    makefileOutput
+                        .AppendLine("clean:")
+                        .AppendLine($"\t-rm -rfv ./{outpath}/*")
+                        .AppendLine($"\t-rm -rfv ./{outpath}/.obj")
                         .AppendLine();
                 }
 
@@ -3513,7 +3525,7 @@ namespace unify_builder
                     commands.Values.Count < minFilesNumsForMultiThread)
                 {
                     // print action title
-                    info("start compilation ...");
+                    info("start compiling ...");
                     if (commands.Count > 0) log("");
 
                     int total = commands.Count;
@@ -3710,7 +3722,7 @@ namespace unify_builder
                     var LD = quotePath(Utility.toUnixPath(replaceEnvVariable(linkInfo.exePath)));
                     makefileOutput
                         .AppendLine($"objs = {string.Join(' ', objdeps)}")
-                        .AppendLine("elf: $(objs) Makefile")
+                        .AppendLine("elf: prebuild $(objs) Makefile")
                         .AppendLine($"\t@echo -e $(COLOR_INF)\"linking {elfpath} ...\"$(COLOR_END)");
 
                     if (cmdGen.getCompilerId() == "SDCC" && linkInfo.sdcc_bundleLibArgs != null)
@@ -4887,7 +4899,7 @@ namespace unify_builder
         static void compileByMulThread(int thrNum, CmdGenerator.CmdInfo[] cmds_, List<string> errLogs)
         {
             // print title
-            info("start compilation (jobs: " + thrNum.ToString() + ") ...");
+            info("start compiling (jobs: " + thrNum.ToString() + ") ...");
             if (cmds_.Length > 0) log("");
 
             Exception err = null;
@@ -5585,7 +5597,7 @@ namespace unify_builder
                 if (item.Value == compilerFullPath)
                     return $"$({item.Key})";
             }
-            return compilerFullPath;
+            return compilerFullPath.Replace(makefileToolchainRoot, "$(COMPILER_DIR)");
         }
 
         //////////////////////////////////////////////////
