@@ -3223,7 +3223,7 @@ namespace unify_builder
                             quotePath(Utility.toUnixPath(cmdGen.getOtherUtilToolFullPath("linker-lib"))));
                     }
 
-                    makefileOutput.AppendLine($"COMPILER_DIR={makefileToolchainRoot}");
+                    makefileOutput.AppendLine($"COMPILER_DIR ?= {makefileToolchainRoot}");
                     foreach (var item in makefileCompilers)
                         makefileOutput.AppendLine($"{item.Key}={item.Value.Replace(makefileToolchainRoot, "$(COMPILER_DIR)")}");
                     makefileOutput.AppendLine();
