@@ -116,6 +116,13 @@ namespace unify_builder
             return Path.IsPathRooted(path);
         }
 
+        /// <summary>
+        /// 相对路径转换
+        /// </summary>
+        /// <param name="root_"></param>
+        /// <param name="targetPath_"></param>
+        /// <param name="useUnixPath"></param>
+        /// <returns>返回相对路径，比如：abc\def。如果失败则返回null</returns>
         public static string toRelativePath(string root_, string targetPath_, bool useUnixPath = false)
         {
             string DIR_SEP = (useUnixPath ? '/' : Path.DirectorySeparatorChar).ToString();
@@ -2315,7 +2322,6 @@ namespace unify_builder
 
         public static Options cliArgs = null;
         static StringBuilder makefileOutput = new(4096);
-        static string makefileToolchainRoot = "";
         static Dictionary<string, string> makefileCompilers = new(8);
 
         enum BuilderMode
@@ -3150,7 +3156,7 @@ namespace unify_builder
                     // dump informations
                     makefileOutput
                         .AppendLine("# Usage:")
-                        .AppendLine("#  - Build:\tmake")
+                        .AppendLine("#  - Build:\tmake COMPILER_DIR=<dir path>")
                         .AppendLine("#  - Clean:\tmake clean")
                         .AppendLine()
                         .AppendLine("# Targets Dependences Chain:")
@@ -3167,6 +3173,44 @@ namespace unify_builder
                         .AppendLine("endif")
                         .AppendLine();
 
+                    // setup compiler
+                    makefileCompilers.Add("CC",  Utility.toUnixPath(CC_PATH));
+                    makefileCompilers.Add("AS",  Utility.toUnixPath(AS_PATH));
+                    makefileCompilers.Add("CXX", Utility.toUnixPath(CXX_PATH));
+                    makefileCompilers.Add("LD",  Utility.toUnixPath(LD_PATH));
+                    if (cmdGen.hasOtherUtilTool("linker-lib"))
+                    {
+                        var p = cmdGen.getOtherUtilToolFullPath("linker-lib");
+                        makefileCompilers.Add("AR", Utility.toUnixPath(p));
+                    }
+
+                    // setup toolchain
+                    var dirvarValue = Utility.toUnixPath(toolchainRoot);
+                    if (OsInfo.instance().OsType == "win32") // on Win32, conv 'C:\xxx' -> /C/xx for GNU make
+                        dirvarValue = Regex.Replace(dirvarValue, @"^([a-zA-Z]):/", "/$1/");
+                    makefileOutput.AppendLine($"COMPILER_DIR ?= {dirvarValue}");
+                    makefileOutput
+                        .AppendLine("_PATH_TMP:=$(COMPILER_DIR)/bin:$(PATH)")
+                        .AppendLine("export PATH=$(_PATH_TMP)")
+                        .AppendLine();
+                    var exeSuffix = OsInfo.instance().OsType == "win32" ? ".exe" : "";
+                    makefileOutput.AppendLine($"EXE?={exeSuffix}");
+                    foreach (var item in makefileCompilers)
+                    {
+                        var val = Regex
+                            .Replace(item.Value, @"\.exe$", "$(EXE)", RegexOptions.IgnoreCase)
+                            .Replace(toolchainRoot, "$(COMPILER_DIR)")
+                            .Replace(Utility.toUnixPath(toolchainRoot), "$(COMPILER_DIR)");
+                        makefileOutput.AppendLine($"{item.Key}={quotePath(val)}");
+                    }
+                    makefileOutput.AppendLine();
+
+                    makefileOutput
+                        .AppendLine("###########################")
+                        .AppendLine("# targets")
+                        .AppendLine("###########################")
+                        .AppendLine();
+
                     // color
                     makefileOutput
                         .AppendLine("COLOR_END=\"\\e[0m\"")
@@ -3175,58 +3219,6 @@ namespace unify_builder
                         .AppendLine("COLOR_SUC=\"\\e[32;1m\"")
                         .AppendLine("COLOR_INF=\"\\e[34;1m\"")
                         .AppendLine();
-
-                    // export env vars
-                    makefileOutput.AppendLine("# System Environment Variables");
-                    var sysPathList = new List<string>(16) {
-                        Utility.toUnixPath(Path.GetDirectoryName(CC_PATH)), // compiler bin folder
-                        Utility.toUnixPath(builderDir),                     // builder dir
-                    };
-                    sysPathList.AddRange(projectSysPaths.Select(p => Utility.toUnixPath(p)));
-                    // on Win32, conv 'C:\xxx' -> /C/xx for GNU make
-                    if (OsInfo.instance().OsType == "win32")
-                    {
-                        var drv_matcher = new Regex(@"^([a-zA-Z]):/", RegexOptions.Compiled);
-                        for (int i = 0; i < sysPathList.Count; i++)
-                            sysPathList[i] = drv_matcher.Replace(sysPathList[i], "/$1/");
-                    }
-                    makefileOutput
-                        .AppendLine($"TMP_PATH:=$(addprefix {string.Join(':', sysPathList)}:, $(PATH))")
-                        .AppendLine("export PATH=$(TMP_PATH)");
-                    makefileOutput
-                        .AppendLine("# Project Variables")
-                        .AppendLine("#  - These variables may be used by \'prebuild\' or \'postbuild\' target.");
-                    foreach (var kv in projectEnvs)
-                    {
-                        if (kv.Key.ToLower() == "path") continue;
-                        if (kv.Key.StartsWith("SYS_")) continue; // skip eide platform vars, now is in Unix platform
-                        makefileOutput.AppendLine($"export {kv.Key}={Utility.toUnixPath(kv.Value)}");
-                        if (kv.Key == "ToolchainRoot") 
-                        {
-                            makefileToolchainRoot = Utility.toUnixPath(kv.Value);
-                        }
-                    }
-                    makefileOutput.AppendLine();
-
-                    // setup compiler
-                    makefileCompilers.Add("CC",
-                        quotePath(Utility.toUnixPath(CC_PATH)));
-                    makefileCompilers.Add("AS",
-                        quotePath(Utility.toUnixPath(AS_PATH)));
-                    makefileCompilers.Add("CXX",
-                        quotePath(Utility.toUnixPath(CXX_PATH)));
-                    makefileCompilers.Add("LD",
-                        quotePath(Utility.toUnixPath(LD_PATH)));
-                    if (cmdGen.hasOtherUtilTool("linker-lib"))
-                    {
-                        makefileCompilers.Add("AR",
-                            quotePath(Utility.toUnixPath(cmdGen.getOtherUtilToolFullPath("linker-lib"))));
-                    }
-
-                    makefileOutput.AppendLine($"COMPILER_DIR ?= {makefileToolchainRoot}");
-                    foreach (var item in makefileCompilers)
-                        makefileOutput.AppendLine($"{item.Key}={item.Value.Replace(makefileToolchainRoot, "$(COMPILER_DIR)")}");
-                    makefileOutput.AppendLine();
 
                     // PHONY target
                     makefileOutput
@@ -5152,10 +5144,14 @@ namespace unify_builder
                         // print task name
                         log("\r\n>> " + taskName + getBlanks(maxLen - taskName.Length) + "\t\t", false);
 
-                        bool useBashInCmd = OsInfo.instance().OsType == "win32" &&
-                            Regex.IsMatch(command, "^(?:.+\\b)?bash(?:\\.exe)?(?:\\s|\")", RegexOptions.IgnoreCase);
+                        // makefile target command
+                        string makefileTargetCmd = Regex
+                            .Replace(command, @"%(\w+)%", "$($1)")
+                            .Replace(toolchainRoot, "$(COMPILER_DIR)");
 
                         // replace env path
+                        bool useBashInCmd = OsInfo.instance().OsType == "win32" &&
+                            Regex.IsMatch(command, "^(?:.+\\b)?bash(?:\\.exe)?(?:\\s|\")", RegexOptions.IgnoreCase);
                         for (int i = 0; i < 5; i++)
                         {
                             if (!command.Contains("${"))
@@ -5172,13 +5168,34 @@ namespace unify_builder
                                 }
 
                                 command = Regex.Replace(command, "\\$\\{" + kv.Key + "\\}", value, RegexOptions.IgnoreCase);
+
+                                if (cliArgs.OutputMakefile)
+                                {
+                                    var replaceValue = value;
+                                    if (OsInfo.instance().OsType == "win32")
+                                    {
+                                        var path = replaceValue;
+                                        if (Utility.isAbsolutePath(path))
+                                            path = Utility.toRelativePath(projectRoot, path) ?? path;
+                                        if (Regex.IsMatch(kv.Key, @"path|dir\b|directory|folder|root\b", RegexOptions.IgnoreCase))
+                                            path = Utility.toUnixPath(path);
+                                        // replace var: ${ToolchainRoot}
+                                        if (kv.Key == "ToolchainRoot")
+                                            path = "$(COMPILER_DIR)";
+                                        else if (Utility.toUnixPath(path).StartsWith(Utility.toUnixPath(toolchainRoot)))
+                                            path = Utility.toUnixPath(path)
+                                                .Replace(Utility.toUnixPath(toolchainRoot), "$(COMPILER_DIR)");
+                                        replaceValue = path;
+                                    }
+                                    makefileTargetCmd = Regex.Replace(
+                                        makefileTargetCmd, "\\$\\{" + kv.Key + "\\}", replaceValue, RegexOptions.IgnoreCase);
+                                }
                             }
                         }
 
                         if (cliArgs.OutputMakefile)
                         {
-                            var win32env_matcher = new Regex(@"%(\w+)%");
-                            makefileOutput.AppendLine("\t" + win32env_matcher.Replace(command, "$($1)"));
+                            makefileOutput.AppendLine("\t" + makefileTargetCmd);
                         }
 
                         // run command
@@ -5593,12 +5610,20 @@ namespace unify_builder
 
         static string aliasMakefileCompiler(string compilerFullPath)
         {
+            compilerFullPath = compilerFullPath.Trim('"');
+
             foreach (var item in makefileCompilers)
             {
                 if (item.Value == compilerFullPath)
                     return $"$({item.Key})";
             }
-            return compilerFullPath.Replace(makefileToolchainRoot, "$(COMPILER_DIR)");
+
+            var res = Regex
+                .Replace(compilerFullPath, @"\.exe$", "$(EXE)", RegexOptions.IgnoreCase)
+                .Replace(toolchainRoot, "$(COMPILER_DIR)")
+                .Replace(Utility.toUnixPath(toolchainRoot), "$(COMPILER_DIR)");
+
+            return quotePath(res);
         }
 
         //////////////////////////////////////////////////
