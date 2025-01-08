@@ -297,6 +297,7 @@ namespace unify_builder
             public string sourceType;       // [required] source file type, value: 'c', 'cpp', 'asm', or 'other'
             public string outPath;          // [required] output file full path
             public Encoding outputEncoding; // [required] cli encoding, UTF8/GBK/...
+            public bool sourceArgsChanged;  // [required] indicates whether the parameter has changed since the last time
 
             public string compilerId;       // [optional] compiler id (lower case), like: 'gcc', 'sdcc'
             public string compilerModel;    // [optional] compiler model name: 'c', 'cpp', 'c/cpp', 'asm', 'asm-clang', 'linker' ...
@@ -1676,7 +1677,7 @@ namespace unify_builder
         private readonly Regex compilerOpts_overrideExprMatcher = new(@"\$<override:(.+?)>", RegexOptions.Compiled);
         private readonly Regex compilerOpts_replaceExprMatcher = new(@"\$<replace:(?<old>.+?)/(?<new>.*?)>", RegexOptions.Compiled);
 
-        private CmdInfo fromModel(string modelName, string langName, string fpath, bool onlyCmd = false)
+        private CmdInfo fromModel(string modelName, string langName, string fpath, bool dryRun = false)
         {
             JObject cModel = models[modelName];
             JObject cParams = paramObj[modelName];
@@ -1756,14 +1757,16 @@ namespace unify_builder
             string outPath = outName + outputSuffix;
             string refPath = outName + ".d"; // --depend ${refPath} 
             string listPath = outName + ".lst";
-            string langOption = null;
 
             List<string> compiler_cmds = new(baseOpts[modelName]);
 
-            if (langName != null && cModel.ContainsKey("$" + langName))
+            if (langName != null && 
+                cModel.ContainsKey("$" + langName) && 
+                cParams.ContainsKey(langName))
             {
-                langOption = cParams.ContainsKey(langName) ? cParams[langName].Value<string>() : "default";
-                compiler_cmds.Add(getCommandValue((JObject)cModel["$" + langName], langOption));
+                string langOption = cParams[langName].Value<string>();
+                if (!string.IsNullOrWhiteSpace(langOption))
+                    compiler_cmds.Add(getCommandValue((JObject)cModel["$" + langName], langOption));
             }
 
             if (cModel.ContainsKey("$listPath"))
@@ -1864,7 +1867,7 @@ namespace unify_builder
             List<string> commands = new(256);
 
             // join commands
-            if (onlyCmd == false) /* generate full command */
+            if (!dryRun) /* generate full command */
             {
                 string outputFormat = cModel["$output"].Value<string>();
 
@@ -1937,11 +1940,20 @@ namespace unify_builder
 
             // save raw compiler args
             FileInfo paramFile = new(outName + paramsSuffix);
-            if (onlyCmd == false) File.WriteAllText(paramFile.FullName, commandLines, encodings[modelName]);
+            bool isCompilerArgsChanged = true;
+            if (!dryRun)
+            {
+                // 对比上次的参数判断这个文件的编译参数是否已经改变
+                if (File.Exists(paramFile.FullName))
+                    isCompilerArgsChanged = !File.ReadAllText(paramFile.FullName).Equals(compilerArgs);
+                // 如果参数改变了，则立即更新参数
+                if (isCompilerArgsChanged)
+                    File.WriteAllText(paramFile.FullName, compilerArgs, encodings[modelName]);
+            }
 
             // if compiler support read args from file
             // we need to regen compiler args
-            if (iFormat.useFile && onlyCmd == false)
+            if (iFormat.useFile && !dryRun)
             {
                 commandLines = iFormat.body.Replace("${value}", "\"" + paramFile.FullName + "\"");
             }
@@ -1955,7 +1967,8 @@ namespace unify_builder
                 sourceType = modelName.StartsWith("asm") ? "asm" : modelName,
                 sourceArgs = compilerArgs,
                 outPath = outPath,
-                outputEncoding = encodings[modelName]
+                outputEncoding = encodings[modelName],
+                sourceArgsChanged = isCompilerArgsChanged
             };
 
             // create cli args for 'compile_commands.json'
@@ -2300,6 +2313,7 @@ namespace unify_builder
 
         static string dumpPath;
         static string toolchainRoot; // the compiler root dir
+        static bool toolchainLocChanged; // 表示自上次编译以来，是否更换过工具链位置
         static int reqThreadsNum;
         static JObject compilerModel;
         static JObject paramsObj;
@@ -2639,6 +2653,23 @@ namespace unify_builder
                 {
                     errorWithLable("Load params failed !\r\n" + err.ToString());
                     return CODE_ERR;
+                }
+
+                // load old params
+                toolchainLocChanged = false;
+                var oldParamsPath = cliArgs.ParamsFilePath + ".old";
+                if (File.Exists(oldParamsPath))
+                {
+                    try
+                    {
+                        var oldParams = JObject.Parse(File.ReadAllText(oldParamsPath, RuntimeEncoding.instance().UTF8));
+                        var toolchainLoc = oldParams["toolchainLocation"].Value<string>();
+                        toolchainLocChanged = toolchainLoc != toolchainRoot;
+                    }
+                    catch (Exception err)
+                    {
+                        warn($"Failed to load \"{oldParamsPath}\", msg: " + err.ToString());
+                    }
                 }
 
                 // init path
@@ -3229,7 +3260,7 @@ namespace unify_builder
                     makefileOutput
                         .AppendLine("all: postbuild")
                         .AppendLine("\t@echo ==========")
-                        .AppendLine("\t@echo -e $(COLOR_SUC)\"ALL DONE.\"$(COLOR_END)")
+                        .AppendLine("\t@echo $(COLOR_SUC)\"ALL DONE.\"$(COLOR_END)")
                         .AppendLine("\t@echo ==========")
                         .AppendLine();
 
@@ -3481,11 +3512,15 @@ namespace unify_builder
                     }
                     else
                     {
-                        CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
-                        src_count_c   = res.cCount;
-                        src_count_cpp = res.cppCount;
-                        src_count_asm = res.asmCount;
-                        commands      = res.totalCmds;
+                        // 如果编译器位置已经更改，则需要重新编译
+                        if (!toolchainLocChanged)
+                        {
+                            CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
+                            src_count_c   = res.cCount;
+                            src_count_cpp = res.cppCount;
+                            src_count_asm = res.asmCount;
+                            commands      = res.totalCmds;
+                        }
                         infoWithLable("file statistics (incremental mode)\r\n");
                     }
                 }
@@ -3716,7 +3751,7 @@ namespace unify_builder
                     makefileOutput
                         .AppendLine($"objs = {string.Join(' ', objdeps)}")
                         .AppendLine("elf: prebuild $(objs) Makefile")
-                        .AppendLine($"\t@echo -e $(COLOR_INF)\"linking {elfpath} ...\"$(COLOR_END)");
+                        .AppendLine($"\t@echo $(COLOR_INF)\"linking {elfpath} ...\"$(COLOR_END)");
 
                     if (cmdGen.getCompilerId() == "SDCC" && linkInfo.sdcc_bundleLibArgs != null)
                     {
@@ -3727,7 +3762,7 @@ namespace unify_builder
 
                     if (extraLinkCmds.Length > 0)
                     {
-                        makefileOutput.AppendLine($"\t@echo -e $(COLOR_INF)\"execute extra link command ...\"$(COLOR_END)");
+                        makefileOutput.AppendLine($"\t@echo $(COLOR_INF)\"execute extra link command ...\"$(COLOR_END)");
 
                         foreach (var cmd in extraLinkCmds)
                         {
@@ -3926,7 +3961,7 @@ namespace unify_builder
 
                     if (commandList != null && commandList.Length > 0)
                     {
-                        makefileOutput.AppendLine($"\t@echo -e $(COLOR_INF)\"make bin files ...\"$(COLOR_END)");
+                        makefileOutput.AppendLine($"\t@echo $(COLOR_INF)\"make bin files ...\"$(COLOR_END)");
 
                         foreach (var cmd in commandList)
                         {
@@ -5064,11 +5099,11 @@ namespace unify_builder
                         if (fieldName == "beforeBuildTasks")
                             makefileOutput
                                 .AppendLine("prebuild:")
-                                .AppendLine("\t@echo -e $(COLOR_INF)\"prebuild ...\"$(COLOR_END)");
+                                .AppendLine("\t@echo $(COLOR_INF)\"prebuild ...\"$(COLOR_END)");
                         else
                             makefileOutput
                                 .AppendLine("postbuild: bin")
-                                .AppendLine("\t@echo -e $(COLOR_INF)\"postbuild ...\"$(COLOR_END)");
+                                .AppendLine("\t@echo $(COLOR_INF)\"postbuild ...\"$(COLOR_END)");
                     }
 
                     if (taskList.Count == 0)
@@ -5325,13 +5360,23 @@ namespace unify_builder
                         diffLogs.Add($"'{cmd.sourcePath}': source file has been changed.");
                     }
 
-                    // file options is newer than obj file
-                    else if (srcParams.ContainsKey(cmd.sourcePath) &&
-                        DateTime.Compare(optLastWriteTime, objLastWriteTime) > 0)
+                    // source args is changed
+                    else if (cmd.sourceArgsChanged)
                     {
                         AddToChangeList(cmd);
-                        diffLogs.Add($"'{cmd.sourcePath}': source file options has been changed.");
+                        diffLogs.Add($"'{cmd.sourcePath}': compiler options has been changed.");
                     }
+
+                    // ------------------------------------------------
+                    //!!! 暂时废弃该分支，因为 sourceArgsChanged 已经替代了该功能
+                    // ------------------------------------------------
+                    //// file options is newer than obj file
+                    //else if (srcParams.ContainsKey(cmd.sourcePath) &&
+                    //    DateTime.Compare(optLastWriteTime, objLastWriteTime) > 0)
+                    //{
+                    //    AddToChangeList(cmd);
+                    //    diffLogs.Add($"'{cmd.sourcePath}': compiler options has been changed.");
+                    //}
 
                     // reference is changed ?
                     else
