@@ -206,6 +206,8 @@ namespace unify_builder
 
         public string CRLF { get; }
 
+        public int SysCmdLenLimit { get; }
+
         private OsInfo()
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -226,6 +228,11 @@ namespace unify_builder
             }
 
             CRLF = OsType == "win32" ? "\r\n" : "\n";
+
+            if (OsType == "win32")
+                SysCmdLenLimit = 8 * 1024;
+            else
+                SysCmdLenLimit = 32 * 1024;
         }
 
         public static OsInfo instance()
@@ -900,7 +907,7 @@ namespace unify_builder
 
         public string getUserSpecifiedModelName(string modelName)
         {
-            if (!paramObj[modelName].ContainsKey("$use")) 
+            if (!paramObj[modelName].ContainsKey("$use"))
                 return modelName;
 
             var name = paramObj[modelName]["$use"].Value<string>();
@@ -908,9 +915,9 @@ namespace unify_builder
             if (string.IsNullOrWhiteSpace(name))
                 return modelName;
 
-            if (name.StartsWith(modelName + "-") || name == modelName) 
+            if (name.StartsWith(modelName + "-") || name == modelName)
                 return name;
-            
+
             return modelName + '-' + name;
         }
 
@@ -1083,7 +1090,7 @@ namespace unify_builder
             // ---
             // For COSMIC STM8 clnk
             //  - We need put all objs into *.lkf files
-            if (compilerId == "COSMIC_STM8" && 
+            if (compilerId == "COSMIC_STM8" &&
                 getUserSpecifiedModelName("linker") == "linker")
             {
                 string usrLkfPath = null;
@@ -1760,8 +1767,8 @@ namespace unify_builder
 
             List<string> compiler_cmds = new(baseOpts[modelName]);
 
-            if (langName != null && 
-                cModel.ContainsKey("$" + langName) && 
+            if (langName != null &&
+                cModel.ContainsKey("$" + langName) &&
                 cParams.ContainsKey(langName))
             {
                 string langOption = cParams[langName].Value<string>();
@@ -1821,7 +1828,8 @@ namespace unify_builder
                         var oldVal = mRes.Groups["old"].Value.Trim();
                         var newVal = "";
 
-                        if (mRes.Groups.ContainsKey("new")) {
+                        if (mRes.Groups.ContainsKey("new"))
+                        {
                             newVal = mRes.Groups["new"].Value.Trim();
                         }
 
@@ -1866,8 +1874,7 @@ namespace unify_builder
 
             List<string> commands = new(256);
 
-            // join commands
-            if (!dryRun) /* generate full command */
+            // generate invoke command for each type compiler.
             {
                 string outputFormat = cModel["$output"].Value<string>();
 
@@ -1899,10 +1906,6 @@ namespace unify_builder
                     commands.Add(outputFormat
                         .Replace("${refPath}", toRelativePathForCompilerArgs(refPath, isQuote)));
                 }
-            }
-            else /* only retain compiler flags */
-            {
-                commands.AddRange(compiler_cmds);
             }
 
             // delete whitespace
@@ -1938,23 +1941,12 @@ namespace unify_builder
             string compilerArgs = commandLines;
             string exeFullPath = getActivedToolFullPath(modelName);
 
-            // save raw compiler args
-            FileInfo paramFile = new(outName + paramsSuffix);
-            bool isCompilerArgsChanged = true;
-            if (!dryRun)
+            // 如果编译器可以从文件读取参数，且当命令行参数长度超过系统限制后，可将参数保存到文件
+            int sysCmdMaxLen = OsInfo.instance().SysCmdLenLimit - 512;
+            if (iFormat.useFile && !dryRun && compilerArgs.Length > sysCmdMaxLen)
             {
-                // 对比上次的参数判断这个文件的编译参数是否已经改变
-                if (File.Exists(paramFile.FullName))
-                    isCompilerArgsChanged = !File.ReadAllText(paramFile.FullName).Equals(compilerArgs);
-                // 如果参数改变了，则立即更新参数
-                if (isCompilerArgsChanged)
-                    File.WriteAllText(paramFile.FullName, compilerArgs, encodings[modelName]);
-            }
-
-            // if compiler support read args from file
-            // we need to regen compiler args
-            if (iFormat.useFile && !dryRun)
-            {
+                FileInfo paramFile = new(outName + paramsSuffix);
+                File.WriteAllText(paramFile.FullName, compilerArgs, encodings[modelName]);
                 commandLines = iFormat.body.Replace("${value}", "\"" + paramFile.FullName + "\"");
             }
 
@@ -1968,19 +1960,23 @@ namespace unify_builder
                 sourceArgs = compilerArgs,
                 outPath = outPath,
                 outputEncoding = encodings[modelName],
-                sourceArgsChanged = isCompilerArgsChanged
+                sourceArgsChanged = true
             };
 
-            // create cli args for 'compile_commands.json'
-            {
-                buildArgs.shellCommand = "\"" + Program.replaceEnvVariable(exeFullPath) + "\" " + compilerArgs
-                    .Replace("${out}", toRelativePathForCompilerArgs(Path.ChangeExtension(outPath, outputSuffix), isQuote))
-                    .Replace("${in}", toRelativePathForCompilerArgs(fpath, isQuote));
-            }
-
             if (isSplitterEn)
-            {
                 buildArgs.argsForSplitter = compilerArgs;
+
+            // create cli args for 'compile_commands.json'
+            buildArgs.shellCommand =
+                "\"" + Program.replaceEnvVariable(exeFullPath) + "\" "
+                     + Program.replaceEnvVariable(compilerArgs);
+
+            // check .cmd file to determine source file need recompile
+            FileInfo cmdFile = new(outPath + ".cmd");
+            if (File.Exists(cmdFile.FullName))
+            {
+                buildArgs.sourceArgsChanged = !File.ReadAllText(
+                    cmdFile.FullName, RuntimeEncoding.instance().UTF8).Equals(buildArgs.shellCommand);
             }
 
             return buildArgs;
@@ -2313,7 +2309,6 @@ namespace unify_builder
 
         static string dumpPath;
         static string toolchainRoot; // the compiler root dir
-        static bool toolchainLocChanged; // 表示自上次编译以来，是否更换过工具链位置
         static int reqThreadsNum;
         static JObject compilerModel;
         static JObject paramsObj;
@@ -2655,23 +2650,6 @@ namespace unify_builder
                     return CODE_ERR;
                 }
 
-                // load old params
-                toolchainLocChanged = false;
-                var oldParamsPath = cliArgs.ParamsFilePath + ".old";
-                if (File.Exists(oldParamsPath))
-                {
-                    try
-                    {
-                        var oldParams = JObject.Parse(File.ReadAllText(oldParamsPath, RuntimeEncoding.instance().UTF8));
-                        var toolchainLoc = oldParams["toolchainLocation"].Value<string>();
-                        toolchainLocChanged = toolchainLoc != toolchainRoot;
-                    }
-                    catch (Exception err)
-                    {
-                        warn($"Failed to load \"{oldParamsPath}\", msg: " + err.ToString());
-                    }
-                }
-
                 // init path
                 projectRoot = paramsObj["rootDir"].Value<string>();
                 dumpPath = paramsObj["dumpPath"].Value<string>();
@@ -2734,7 +2712,7 @@ namespace unify_builder
                 }
 
                 // load user object order
-                if (paramsObj.ContainsKey("options") && 
+                if (paramsObj.ContainsKey("options") &&
                     (paramsObj["options"] as JObject).ContainsKey("linker") &&
                     (paramsObj["options"]["linker"] as JObject).ContainsKey("object-order") &&
                     (paramsObj["options"]["linker"]["object-order"] is JArray objOrderList))
@@ -3476,7 +3454,7 @@ namespace unify_builder
                     {
                         infoWithLable("file statistics (ccache enabled)\r\n");
 
-                        setEnvVariable("CCACHE_DIR", outDir + Path.DirectorySeparatorChar 
+                        setEnvVariable("CCACHE_DIR", outDir + Path.DirectorySeparatorChar
                             + ".ccache");
                         setEnvVariable("CCACHE_LOGFILE", outDir + Path.DirectorySeparatorChar
                             + "ccache.log");
@@ -3513,14 +3491,11 @@ namespace unify_builder
                     else
                     {
                         // 如果编译器位置已经更改，则需要重新编译
-                        if (!toolchainLocChanged)
-                        {
-                            CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
-                            src_count_c   = res.cCount;
-                            src_count_cpp = res.cppCount;
-                            src_count_asm = res.asmCount;
-                            commands      = res.totalCmds;
-                        }
+                        CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
+                        src_count_c   = res.cCount;
+                        src_count_cpp = res.cppCount;
+                        src_count_asm = res.asmCount;
+                        commands      = res.totalCmds;
                         infoWithLable("file statistics (incremental mode)\r\n");
                     }
                 }
@@ -3605,12 +3580,22 @@ namespace unify_builder
                             storeCompileOutput(ccLog);
                         }
 
+                        // compile failed.
                         if (exitCode > ERR_LEVEL)
                         {
                             errLogs.Add(ccLog);
-                            string msg = "compilation failed at : \"" + cmdInfo.sourcePath + "\", exit code: " + exitCode.ToString() 
+                            string msg = "compilation failed at : \"" + cmdInfo.sourcePath + "\", exit code: " + exitCode.ToString()
                                        + "\ncommand: \n  " + cmdInfo.shellCommand;
                             throw new Exception(msg);
+                        }
+                        // compile ok.
+                        else
+                        {
+                            if (!cliArgs.DryRun)
+                            {
+                                FileInfo cmdFile = new(cmdInfo.outPath + ".cmd");
+                                File.WriteAllTextAsync(cmdFile.FullName, cmdInfo.shellCommand, RuntimeEncoding.instance().UTF8);
+                            }
                         }
                     }
                 }
@@ -3836,7 +3821,7 @@ namespace unify_builder
                                 printProgress("  ROM: ", (float)rom_size / rom_max_size, s);
                             }
                         }
-                        
+
                         if (ccID == "ac5" || ccID == "ac6")
                         {
                             parseMapRegionInfoForArmlink(mapFileFullPath, out MapRegionInfo mapinfo);
@@ -3876,7 +3861,7 @@ namespace unify_builder
                                             printRegion(child, _max_len, 2, "- ");
                                         }
                                     }
-                                    else 
+                                    else
                                     {
                                         log("".PadRight(2 * 2) + "  " + "** This load region have no execution regions. **");
                                     }
@@ -4040,11 +4025,11 @@ namespace unify_builder
             {
                 if (size > 1024 * 1024)
                 {
-                    return $"{size/(1024.0f * 1024.0f):f1}MB";
+                    return $"{size / (1024.0f * 1024.0f):f1}MB";
                 }
                 else
                 {
-                    return $"{size/(1024.0f):f1}KB";
+                    return $"{size / (1024.0f):f1}KB";
                 }
             }
             else
@@ -4110,7 +4095,7 @@ namespace unify_builder
                     var region = parseRegion(line_trimed);
                     if (region != null)
                     {
-                        if (cur_region != null) 
+                        if (cur_region != null)
                         {
                             cur_region.children = cur_children.ToArray();
                             load_regions.Add(cur_region);
@@ -4655,7 +4640,7 @@ namespace unify_builder
             }
         }
 
-        public static void setEnvVariable(string key, string value) 
+        public static void setEnvVariable(string key, string value)
         {
             setEnvValue(key, value);
         }
@@ -5029,6 +5014,7 @@ namespace unify_builder
                         logTxt = isLogEn ? cclog : null,
                     });
 
+                    // compile failed.
                     if (exitCode > ERR_LEVEL)
                     {
                         lock (errLogs)
@@ -5041,6 +5027,15 @@ namespace unify_builder
 
                         err = new Exception(msg);
                         break;
+                    }
+                    // compile ok
+                    else
+                    {
+                        if (!cliArgs.DryRun)
+                        {
+                            FileInfo cmdFile = new(ccArgs.outPath + ".cmd");
+                            File.WriteAllTextAsync(cmdFile.FullName, ccArgs.shellCommand, RuntimeEncoding.instance().UTF8);
+                        }
                     }
                 }
             };
@@ -5433,7 +5428,7 @@ namespace unify_builder
                     e.Message);
             }
 
-            if (diffLogs.Count > 0) 
+            if (diffLogs.Count > 0)
             {
                 appendLogs($"[info] incremental build: {diffLogs.Count} source files changed",
                     "These source files will be recompiled", diffLogs.ToArray());
