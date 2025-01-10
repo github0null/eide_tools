@@ -2435,8 +2435,11 @@ namespace unify_builder
             [Option("rebuild", Required = false, HelpText = "force rebuild project")]
             public bool ForceRebuild { get; set; }
 
-            [Option("only-dump-args", Required = false, HelpText = "only print compiler args")]
+            [Option("only-dump-args", Required = false, HelpText = "just only print compiler args")]
             public bool OnlyDumpArgs { get; set; }
+
+            [Option("only-dump-compilerdb", Required = false, HelpText = "just only dump compile_commands.json")]
+            public bool OnlyDumpCompilerDB { get; set; }
 
             [Option("use-ccache", Required = false, HelpText = "use ccache speed up compilation")]
             public bool UseCcache { get; set; }
@@ -3260,15 +3263,13 @@ namespace unify_builder
                 // reset work directory
                 resetWorkDir();
 
-                // prepare build
-                infoWithLable("", false);
-                if (cliArgs.DryRun)
-                    warn($"dry run at {time.ToString("yyyy-MM-dd HH:mm:ss")}\r\n");
-                else
-                    info($"start building at {time.ToString("yyyy-MM-dd HH:mm:ss")}\r\n");
-
-                // print toolchain name and version
-                infoWithLable(cmdGen.compilerFullName + "\r\n", true, "TOOL");
+                // print some informations
+                if (!cliArgs.OnlyDumpCompilerDB)
+                {
+                    infoWithLable("", false);
+                    info($"start building at {time.ToString("yyyy-MM-dd HH:mm:ss")}{(cliArgs.DryRun ? "(dry-run)" : "")}\r\n");
+                    infoWithLable(cmdGen.compilerFullName + "\r\n", true, "TOOL");
+                }
 
                 // some compiler database informations
                 Dictionary<string, string> sourceRefs = new();
@@ -3352,6 +3353,35 @@ namespace unify_builder
                     });
                 }
 
+                // save compiler database informations
+                try
+                {
+                    string refFilePath = outDir + Path.DirectorySeparatorChar + refJsonName;
+                    File.WriteAllText(refFilePath, JsonConvert.SerializeObject(sourceRefs), RuntimeEncoding.instance().UTF8);
+
+                    string compilerDbPath = outDir + Path.DirectorySeparatorChar + "compile_commands.json";
+                    CompileCommandsDataBaseItem[] iLi = compilerArgsDataBase.ToArray();
+                    File.WriteAllText(compilerDbPath, JsonConvert.SerializeObject(iLi), RuntimeEncoding.instance().UTF8);
+
+                    if (cliArgs.OnlyDumpCompilerDB)
+                    {
+                        log("Source Map Database Path: " + refFilePath);
+                        log("Compiler Database Path: " + compilerDbPath);
+                        unlockLogs();
+                        return CODE_DONE;
+                    }
+                }
+                catch (Exception err)
+                {
+                    if (cliArgs.OnlyDumpCompilerDB)
+                    {
+                        error("Failed:");
+                        error(err.ToString() + "\n");
+                        unlockLogs();
+                        return CODE_ERR;
+                    }
+                }
+
                 // check source file count
                 if (src_count_c + src_count_cpp + src_count_asm == 0)
                 {
@@ -3398,21 +3428,6 @@ namespace unify_builder
                             throw new Exception("Not found 'Linker' !, [path]: \"" + absPath + "\"");
                         }
                     }
-                }
-
-                // save compiler database informations
-                try
-                {
-                    string refFilePath = outDir + Path.DirectorySeparatorChar + refJsonName;
-                    File.WriteAllText(refFilePath, JsonConvert.SerializeObject(sourceRefs), RuntimeEncoding.instance().UTF8);
-
-                    string compilerDbPath = outDir + Path.DirectorySeparatorChar + "compile_commands.json";
-                    CompileCommandsDataBaseItem[] iLi = compilerArgsDataBase.ToArray();
-                    File.WriteAllText(compilerDbPath, JsonConvert.SerializeObject(iLi), RuntimeEncoding.instance().UTF8);
-                }
-                catch (Exception)
-                {
-                    // do nothings
                 }
 
                 if (cliArgs.OutputMakefile)
