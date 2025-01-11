@@ -2332,6 +2332,7 @@ namespace unify_builder
         public static Options cliArgs = null;
         static StringBuilder makefileOutput = new(4096);
         static Dictionary<string, string> makefileCompilers = new(8);
+        static BlockingCollection<Task> ioAsyncTask = new();
 
         enum BuilderMode
         {
@@ -3609,7 +3610,8 @@ namespace unify_builder
                             if (!cliArgs.DryRun)
                             {
                                 FileInfo cmdFile = new(cmdInfo.outPath + ".cmd");
-                                File.WriteAllTextAsync(cmdFile.FullName, cmdInfo.shellCommand, RuntimeEncoding.instance().UTF8);
+                                var t = File.WriteAllTextAsync(cmdFile.FullName, cmdInfo.shellCommand, RuntimeEncoding.instance().UTF8);
+                                ioAsyncTask.Add(t);
                             }
                         }
                     }
@@ -4008,6 +4010,12 @@ namespace unify_builder
                 unlockLogs();
 
                 return CODE_ERR;
+            }
+
+            // wait All async IO task
+            if (ioAsyncTask.Count > 0)
+            {
+                Task.WaitAll(ioAsyncTask.ToArray());
             }
 
             try
@@ -5049,7 +5057,8 @@ namespace unify_builder
                         if (!cliArgs.DryRun)
                         {
                             FileInfo cmdFile = new(ccArgs.outPath + ".cmd");
-                            File.WriteAllTextAsync(cmdFile.FullName, ccArgs.shellCommand, RuntimeEncoding.instance().UTF8);
+                            var t = File.WriteAllTextAsync(cmdFile.FullName, ccArgs.shellCommand, RuntimeEncoding.instance().UTF8);
+                            ioAsyncTask.Add(t);
                         }
                     }
                 }
