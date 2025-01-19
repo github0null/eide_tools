@@ -3644,21 +3644,6 @@ namespace unify_builder
                 // add all static libs
                 linkerObjs.Add("<global>/libs", libList.ToList());
 
-                // dump old params file after compilation done 
-                // because link operation will always execute, but compilaion not
-                try
-                {
-                    if (!cliArgs.DryRun)
-                    {
-                        string oldParmasPath = paramsFilePath + ".old";
-                        File.WriteAllText(oldParmasPath, File.ReadAllText(paramsFilePath));
-                    }
-                }
-                catch (Exception)
-                {
-                    // do nothing
-                }
-
                 log("");
                 infoWithLable("", false);
                 info("start linking ...");
