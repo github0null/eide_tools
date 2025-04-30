@@ -1209,12 +1209,15 @@ namespace unify_builder
 
             //--
 
-            FileInfo objliFile = new(outName + ".objlist");
-            File.WriteAllText(objliFile.FullName, string.Join(objSep, objList.ToArray()), encodings["linker"]);
-
-            FileInfo paramFile = new(outName + ".lnp");
             var linkerRealArgs = cmdLine.Replace("\r\n", " ").Replace("\n", " ");
-            File.WriteAllText(paramFile.FullName, cmdLine, encodings["linker"]);
+            FileInfo paramFile = new(outName + ".lnp");
+
+            if (!cliTestMode)
+            {
+                FileInfo objliFile = new(outName + ".objlist");
+                File.WriteAllText(objliFile.FullName, string.Join(objSep, objList.ToArray()), encodings["linker"]);
+                File.WriteAllText(paramFile.FullName, cmdLine, encodings["linker"]);
+            }
 
             string commandLine = null;
 
@@ -1268,12 +1271,12 @@ namespace unify_builder
             };
         }
 
-        public CmdInfo[] genOutputCommand(string linkerOutputFile)
+        public CmdInfo[] genOutputCommand(string linkerOutputFile, string[] excludes)
         {
             JObject linkerModel = models["linker"];
             List<CmdInfo> commandsList = new();
 
-            // not need output hex/bin
+            // model file not support output .hex .bin .s19 files
             if (!linkerModel.ContainsKey("$outputBin"))
                 return commandsList.ToArray();
 
@@ -1283,10 +1286,15 @@ namespace unify_builder
             {
                 string outFilePath = outFileName;
 
+                string outFileSuffix = "";
                 if (outputModel.ContainsKey("outputSuffix"))
-                {
-                    outFilePath += outputModel["outputSuffix"].Value<string>();
-                }
+                    outFileSuffix = outputModel["outputSuffix"].Value<string>();
+
+                // don't generate some specific files
+                if (excludes.Contains(outFileSuffix))
+                    continue;
+
+                outFilePath += outFileSuffix;
 
                 string command = outputModel["command"].Value<string>()
                     .Replace("${linkerOutput}", toRelativePathForCompilerArgs(linkerOutputFile))
@@ -1449,6 +1457,16 @@ namespace unify_builder
             return paramObj["linker"].ContainsKey("$disableOutputTask")
                 && paramObj["linker"]["$disableOutputTask"].Type == JTokenType.Boolean
                 && paramObj["linker"]["$disableOutputTask"].Value<bool>();
+        }
+
+        public string[] getOutputTaskExcludes()
+        {
+            if (paramObj["linker"].ContainsKey("$outputTaskExcludes") && 
+                paramObj["linker"]["$outputTaskExcludes"].Type == JTokenType.Array)
+            {
+                return paramObj["linker"]["$outputTaskExcludes"].Values<string>().ToArray();
+            }
+            return Array.Empty<string>();
         }
 
         //------------
@@ -3132,7 +3150,7 @@ namespace unify_builder
                     log(cmdInf.commandLine);
 
                     warn("\r\nOutput file command line: \r\n");
-                    CmdGenerator.CmdInfo[] cmdInfoList = cmdGen.genOutputCommand(cmdInf.outPath);
+                    CmdGenerator.CmdInfo[] cmdInfoList = cmdGen.genOutputCommand(cmdInf.outPath, Array.Empty<string>());
                     foreach (CmdGenerator.CmdInfo info in cmdInfoList)
                     {
                         log("\t" + info.title + ": ");
@@ -3265,7 +3283,11 @@ namespace unify_builder
                 resetWorkDir();
 
                 // print some informations
-                if (!cliArgs.OnlyDumpCompilerDB)
+                if (cliArgs.OnlyDumpCompilerDB)
+                {
+                    log("start generating compiler database ...");
+                }
+                else
                 {
                     infoWithLable("", false);
                     info($"start building at {time.ToString("yyyy-MM-dd HH:mm:ss")}{(cliArgs.DryRun ? "(dry-run)" : "")}\r\n");
@@ -3880,7 +3902,7 @@ namespace unify_builder
                 // execute output command
                 CmdGenerator.CmdInfo[] commandList = (cmdGen.isDisableOutputTask()) ?
                     null :
-                    cmdGen.genOutputCommand(linkInfo.outPath);
+                    cmdGen.genOutputCommand(linkInfo.outPath, cmdGen.getOutputTaskExcludes());
 
                 if (commandList != null &&
                     commandList.Length > 0)
