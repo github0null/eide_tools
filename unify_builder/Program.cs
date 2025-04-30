@@ -955,13 +955,14 @@ namespace unify_builder
             // ref: https://sourceforge.net/p/sdcc/discussion/1865/thread/e395ff7a42/#a03e
             // cmd: sdar -rcv ${out} ${in}
             string sdcc_bundleLibArgs = null;
-            if (!cliTestMode && compilerId == "SDCC" && checkEntryOrderForSdcc)
+            if (!cliTestMode && compilerId == "SDCC")
             {
                 List<string> sourcesObjs = new(objList);
                 List<string> finalObjsLi = new(128); // must be absolute path
                 List<string> bundledList = new(128); // must be relative path
 
                 // make entry src file at the first of cli args
+                if (checkEntryOrderForSdcc)
                 {
                     string mainName = linkerParams.ContainsKey("$mainFileName")
                         ? linkerParams["$mainFileName"].Value<string>() : "main";
@@ -984,7 +985,7 @@ namespace unify_builder
                 // split objs
                 foreach (string objPath in sourcesObjs)
                 {
-                    if (objPath.EndsWith(".lib") || objPath.EndsWith(".a"))
+                    if (objPath.EndsWith(".lib") || objPath.EndsWith(".a") || Program.cliArgs.SdccNotBundleRel)
                         finalObjsLi.Add(objPath);
                     else
                         bundledList.Add(toRelativePathForCompilerArgs(objPath));
@@ -2468,6 +2469,9 @@ namespace unify_builder
 
             [Option("dry-run", Required = false, HelpText = "dry run mode. Don't realy do compile")]
             public bool DryRun { get; set; }
+
+            [Option("sdcc-not-bundle-rel", Required = false, HelpText = "do not bundle *.rel for sdcc")]
+            public bool SdccNotBundleRel { get; set; }
         }
 
         // linux VT100 color
