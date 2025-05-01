@@ -2313,7 +2313,9 @@ namespace unify_builder
 
         // compiler params for single source file, Map<absPath, params>
         static readonly Dictionary<string, string> srcParams = new(512);
-        static Int64 paramsMtime = 0; // source file params modify time
+
+        // some source files always need to be build, setup them
+        static readonly HashSet<string> alwaysInBuildSources = new(512);
 
         static readonly string appBaseDir = AppDomain.CurrentDomain.SetupInformation.ApplicationBase.TrimEnd(Path.DirectorySeparatorChar);
         static readonly Dictionary<string, string> curEnvs = new(64); // sys envs
@@ -2697,9 +2699,12 @@ namespace unify_builder
                 outDir = Utility.isAbsolutePath(outDir) ? outDir : (projectRoot + Path.DirectorySeparatorChar + outDir);
 
                 // prepare source
-                paramsMtime = paramsObj.ContainsKey("sourceParamsMtime") ? paramsObj["sourceParamsMtime"].Value<Int64>() : 0;
-                JObject srcParamsObj = paramsObj.ContainsKey("sourceParams") ? (JObject)paramsObj["sourceParams"] : null;
-                addToSourceList(projectRoot, paramsObj["sourceList"].Values<string>(), srcParamsObj);
+                JObject srcParamsObj = paramsObj.ContainsKey("sourceParams") 
+                    ? (JObject)paramsObj["sourceParams"] : null;
+                IEnumerable<string> srcList = paramsObj["sourceList"].Values<string>();
+                HashSet<string> alwaysBuild = new HashSet<string>(paramsObj.ContainsKey("alwaysInBuildSources")
+                    ? paramsObj["alwaysInBuildSources"].Values<string>() : Array.Empty<string>());
+                prepareSourceFiles(projectRoot, srcList, srcParamsObj, alwaysBuild);
 
                 // other params
                 modeList.Add(BuilderMode.NORMAL);
@@ -5339,7 +5344,6 @@ namespace unify_builder
             return lastWrTime;
         }
 
-        static readonly DateTime utcBaseTime = TimeZoneInfo.ConvertTimeFromUtc(new System.DateTime(1970, 1, 1), TimeZoneInfo.Local);
         static CheckDiffRes checkDiff(string modelID, Dictionary<string, CmdGenerator.CmdInfo> commands)
         {
             CheckDiffRes res = new CheckDiffRes();
@@ -5369,8 +5373,6 @@ namespace unify_builder
 
             try
             {
-                DateTime optLastWriteTime = utcBaseTime.AddMilliseconds(paramsMtime);
-
                 foreach (var cmd in commands.Values)
                 {
                     if (!File.Exists(cmd.outPath)) // not compiled
@@ -5383,8 +5385,14 @@ namespace unify_builder
                     DateTime objLastWriteTime = File.GetLastWriteTime(cmd.outPath);
                     DateTime srcLastWriteTime = File.GetLastWriteTime(cmd.sourcePath);
 
+                    // source always in build
+                    if (alwaysInBuildSources.Contains(cmd.sourcePath))
+                    {
+                        AddToChangeList(cmd);
+                        diffLogs.Add($"'{cmd.sourcePath}': source file is always in build.");
+                    }
                     // src file is newer than obj file
-                    if (DateTime.Compare(srcLastWriteTime, objLastWriteTime) > 0)
+                    else if (DateTime.Compare(srcLastWriteTime, objLastWriteTime) > 0)
                     {
                         AddToChangeList(cmd);
                         diffLogs.Add($"'{cmd.sourcePath}': source file has been changed.");
@@ -5396,17 +5404,6 @@ namespace unify_builder
                         AddToChangeList(cmd);
                         diffLogs.Add($"'{cmd.sourcePath}': compiler options has been changed.");
                     }
-
-                    // ------------------------------------------------
-                    //!!! 暂时废弃该分支，因为 sourceArgsChanged 已经替代了该功能
-                    // ------------------------------------------------
-                    //// file options is newer than obj file
-                    //else if (srcParams.ContainsKey(cmd.sourcePath) &&
-                    //    DateTime.Compare(optLastWriteTime, objLastWriteTime) > 0)
-                    //{
-                    //    AddToChangeList(cmd);
-                    //    diffLogs.Add($"'{cmd.sourcePath}': compiler options has been changed.");
-                    //}
 
                     // reference is changed ?
                     else
@@ -5622,7 +5619,8 @@ namespace unify_builder
             }
         }
 
-        static void addToSourceList(string rootDir, IEnumerable<string> sourceList, JObject srcParamsObj)
+        static void prepareSourceFiles(string rootDir, IEnumerable<string> sourceList, 
+            JObject srcParamsObj, HashSet<string> alwaysInBuild)
         {
             foreach (string repath in sourceList)
             {
@@ -5653,6 +5651,11 @@ namespace unify_builder
                     }
 
                     srcParams.Add(file.FullName, srcParamsObj[repath].Value<string>());
+                }
+
+                if (alwaysInBuild.Contains(repath))
+                {
+                    alwaysInBuildSources.Add(file.FullName);
                 }
             }
         }
