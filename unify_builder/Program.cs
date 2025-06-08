@@ -2800,6 +2800,23 @@ namespace unify_builder
                 return CODE_ERR;
             }
 
+            // record build start time
+            DateTime time = DateTime.Now;
+
+            if (cliArgs.OnlyDumpCompilerDB)
+            {
+                log("start generating compiler database ...");
+            }
+            else if (checkMode(BuilderMode.DEBUG))
+            {
+                // nothing todo
+            }
+            else
+            {
+                infoWithLable("", false);
+                info($"start building at {time:yyyy-MM-dd HH:mm:ss}{(cliArgs.DryRun ? "(dry-run)" : "")}\r\n");
+            }
+
             // open and lock log file
             lockLogs();
 
@@ -2820,9 +2837,6 @@ namespace unify_builder
 
             // compiler prefix
             string COMPILER_CMD_PREFIX = "";
-
-            // record build start time
-            DateTime time = DateTime.Now;
 
             try
             {
@@ -3291,15 +3305,8 @@ namespace unify_builder
                 // reset work directory
                 resetWorkDir();
 
-                // print some informations
-                if (cliArgs.OnlyDumpCompilerDB)
+                if (!cliArgs.OnlyDumpCompilerDB)
                 {
-                    log("start generating compiler database ...");
-                }
-                else
-                {
-                    infoWithLable("", false);
-                    info($"start building at {time.ToString("yyyy-MM-dd HH:mm:ss")}{(cliArgs.DryRun ? "(dry-run)" : "")}\r\n");
                     infoWithLable(cmdGen.compilerFullName + "\r\n", true, "TOOL");
                 }
 
@@ -5710,16 +5717,33 @@ namespace unify_builder
 
         static void lockLogs()
         {
-            if (logStream == null)
+            if (cliArgs.OnlyDumpCompilerDB || cliArgs.OnlyDumpArgs)
             {
-                string logPath = dumpPath + Path.DirectorySeparatorChar + "unify_builder.log";
-                logStream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.None);
-            }
+                if (logStream == null)
+                {
+                    string logPath = Path.GetTempPath() + "unify_builder.log";
+                    logStream = new FileStream(logPath, FileMode.Append, FileAccess.Write);
+                }
 
-            if (compilerLogStream == null)
+                if (compilerLogStream == null)
+                {
+                    string logPath = Path.GetTempPath() + "compiler.log";
+                    compilerLogStream = new FileStream(logPath, FileMode.Create, FileAccess.Write);
+                }
+            }
+            else
             {
-                string logPath = dumpPath + Path.DirectorySeparatorChar + "compiler.log";
-                compilerLogStream = new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                if (logStream == null)
+                {
+                    string logPath = dumpPath + Path.DirectorySeparatorChar + "unify_builder.log";
+                    logStream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.None);
+                }
+
+                if (compilerLogStream == null)
+                {
+                    string logPath = dumpPath + Path.DirectorySeparatorChar + "compiler.log";
+                    compilerLogStream = new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                }
             }
         }
 
