@@ -298,16 +298,19 @@ namespace unify_builder
         public class CmdInfo
         {
             public string exePath;          // [required] executable file full path
-            public string commandLine;      // [required] executable file cli args
-            public string sourcePath;       // [required] for compiler, value is source file absolute path; for linker, value is output '.map' path
-            public string sourceArgs;       // [required] real compiler options just for c/c++/asm source files, otherwise it's null
-            public string sourceType;       // [required] source file type, value: 'c', 'cpp', 'asm', or 'other'
-            public string outPath;          // [required] output file full path
-            public Encoding outputEncoding; // [required] cli encoding, UTF8/GBK/...
-            public bool sourceArgsChanged;  // [required] indicates whether the parameter has changed since the last time
+            public string commandLine;      // [required] 传递给 exePath 的命令行。取值根据编译器的命令行模式而有所不同
+                                            //      当编译器从命令行读取参数时，该值与sourceArgs相同，
+                                            //      当编译器从文件中读取参数时，该值为编译器要求的格式，比如：--Via <filepath> ...
+            public string sourcePath;       // [required] 对于编译器来说，值为源文件的绝对路径; 对于链接器来说，该值无意义，暂时用作存放map文件的路径
+            public string sourceArgs;       // [required] c/c++/asm 源文件的完整编译参数。
+            public string sourceType;       // [required] 源文件类型，取值：'c', 'cpp', 'asm', or 'other'
+            public string outPath;          // [required] 输出文件的完整路径（绝对路径）
+            public Encoding outputEncoding; // [required] 命令行的字符集编码：UTF8/GBK/...
+            public bool sourceArgsChanged;  // [required] 指示自从上次编译后编译参数是否改变，用于确定是否需要重新编译
+            public string baseArgs;         // [optional] 基础的编译参数，不含有 -o，-MMD 等带有输出文件路径的参数
 
-            public string compilerId;       // [optional] compiler id (lower case), like: 'gcc', 'sdcc'
-            public string compilerModel;    // [optional] compiler model name: 'c', 'cpp', 'c/cpp', 'asm', 'asm-clang', 'linker' ...
+            public string compilerId;       // [optional] 编译器id（小写），比如：'gcc', 'sdcc'
+            public string compilerModel;    // [optional] 编译器的类型名字，比如：'c', 'cpp', 'c/cpp', 'asm', 'asm-clang', 'linker' ...
 
             public string title;            // [optional] a title for this command
             public string shellCommand;     // [optional] shell command which will be invoke compiler, used to gen 'compile_commands.json'
@@ -1786,6 +1789,7 @@ namespace unify_builder
 
             List<string> compiler_cmds = new(baseOpts[modelName]);
 
+            // setup built-in compiler options
             if (langName != null &&
                 cModel.ContainsKey("$" + langName) &&
                 cParams.ContainsKey(langName))
@@ -1793,12 +1797,6 @@ namespace unify_builder
                 string langOption = cParams[langName].Value<string>();
                 if (!string.IsNullOrWhiteSpace(langOption))
                     compiler_cmds.Add(getCommandValue((JObject)cModel["$" + langName], langOption));
-            }
-
-            if (cModel.ContainsKey("$listPath"))
-            {
-                compiler_cmds.Add(getCommandValue((JObject)cModel["$listPath"], "")
-                    .Replace("${listPath}", toRelativePathForCompilerArgs(listPath, isQuote)));
             }
 
             // set independent options for source file
@@ -1884,51 +1882,10 @@ namespace unify_builder
                 compiler_cmds.AddRange(userOpts[modelName]);
             }
 
-            // replace variables
-            for (int i = 0; i < compiler_cmds.Count; i++)
-            {
-                compiler_cmds[i] = compiler_cmds[i]
-                    .Replace("${outName}", outName);
-            }
-
-            List<string> commands = new(256);
-
-            // generate invoke command for each type compiler.
-            {
-                string outputFormat = cModel["$output"].Value<string>();
-
-                if (outputFormat.Contains("${in}"))
-                {
-                    commands.AddRange(compiler_cmds);
-
-                    if (!isSplitterEn)
-                    {
-                        outputFormat = outputFormat
-                            .Replace("${out}", toRelativePathForCompilerArgs(outPath, isQuote))
-                            .Replace("${in}", toRelativePathForCompilerArgs(fpath, isQuote));
-                    }
-
-                    commands.Add(outputFormat
-                        .Replace("${refPath}", toRelativePathForCompilerArgs(refPath, isQuote)));
-                }
-                else /* compate KEIL_C51 */
-                {
-                    commands.Insert(0, toRelativePathForCompilerArgs(fpath));
-                    commands.AddRange(compiler_cmds);
-
-                    if (!isSplitterEn)
-                    {
-                        outputFormat = outputFormat
-                            .Replace("${out}", toRelativePathForCompilerArgs(outPath, isQuote));
-                    }
-
-                    commands.Add(outputFormat
-                        .Replace("${refPath}", toRelativePathForCompilerArgs(refPath, isQuote)));
-                }
-            }
+            List<string> commands = new(compiler_cmds);
 
             // delete whitespace
-            commands.RemoveAll(delegate (string _command) { return string.IsNullOrEmpty(_command); });
+            commands.RemoveAll(delegate (string _command) { return string.IsNullOrWhiteSpace(_command); });
 
             // repleace eide cmd vars and system envs
             {
@@ -1956,7 +1913,48 @@ namespace unify_builder
                 }
             }
 
-            string commandLines = compilerAttr_commandPrefix + string.Join(" ", commands.ToArray());
+            string sourceBaseArgs = compilerAttr_commandPrefix + string.Join(" ", commands);
+
+            // 最后一步，处理命令行中的文件路径参数，得到完整的命令行
+            // 大多数编译器使用 -o 的参数指定 obj 路径，KeilC51 例外
+            {
+                if (cModel.ContainsKey("$listPath"))
+                {
+                    var val = getCommandValue((JObject)cModel["$listPath"], "");
+                    val = val.Replace("${listPath}", toRelativePathForCompilerArgs(listPath, isQuote));
+                    if (!string.IsNullOrWhiteSpace(val))
+                        commands.Add(val);
+                }
+
+                string outputFormat = cModel["$output"].Value<string>();
+
+                if (outputFormat.Contains("${in}"))
+                {
+                    if (!isSplitterEn)
+                    {
+                        outputFormat = outputFormat
+                            .Replace("${out}", toRelativePathForCompilerArgs(outPath, isQuote))
+                            .Replace("${in}", toRelativePathForCompilerArgs(fpath, isQuote));
+                    }
+                }
+                else /* compate KEIL_C51 */
+                {
+                    commands.Insert(0, toRelativePathForCompilerArgs(fpath));
+
+                    if (!isSplitterEn)
+                    {
+                        outputFormat = outputFormat
+                            .Replace("${out}", toRelativePathForCompilerArgs(outPath, isQuote));
+                    }
+                }
+
+                var outputCmd = outputFormat
+                    .Replace("${refPath}", toRelativePathForCompilerArgs(refPath, isQuote));
+
+                commands.Add(outputCmd);
+            }
+
+            string commandLines = compilerAttr_commandPrefix + string.Join(" ", commands);
             string compilerArgs = commandLines;
             string exeFullPath = getActivedToolFullPath(modelName);
 
@@ -1979,7 +1977,8 @@ namespace unify_builder
                 sourceArgs = compilerArgs,
                 outPath = outPath,
                 outputEncoding = encodings[modelName],
-                sourceArgsChanged = true
+                sourceArgsChanged = true,
+                baseArgs = sourceBaseArgs
             };
 
             if (isSplitterEn)
@@ -2359,7 +2358,6 @@ namespace unify_builder
         {
             NORMAL = 0,
             FAST,
-            DEBUG,
             MULTHREAD
         }
 
@@ -2458,7 +2456,7 @@ namespace unify_builder
             public bool ForceRebuild { get; set; }
 
             [Option("only-dump-args", Required = false, HelpText = "just only print compiler args")]
-            public bool OnlyDumpArgs { get; set; }
+            public bool OnlyPrintArgs { get; set; }
 
             [Option("only-dump-compilerdb", Required = false, HelpText = "just only dump compile_commands.json")]
             public bool OnlyDumpCompilerDB { get; set; }
@@ -2570,84 +2568,23 @@ namespace unify_builder
                 }
             }
 
+            /* start commands runner ? */
+            if (!string.IsNullOrEmpty(cliArgs.RunCommandsJsonPath))
+            {
+                try
+                {
+                    return RunCommandsJson();
+                }
+                catch (Exception err)
+                {
+                    errorWithLable("runner aborted, msg: " + err.Message);
+                    return CODE_ERR;
+                }
+            }
+
             // init all params
             try
             {
-                /* start commands runner ? */
-                if (!string.IsNullOrEmpty(cliArgs.RunCommandsJsonPath))
-                {
-                    try
-                    {
-                        List<CommandInfo> cmds = new(16);
-                        JArray jobj = JArray.Parse(
-                            File.ReadAllText(cliArgs.RunCommandsJsonPath, RuntimeEncoding.instance().UTF8)
-                        );
-
-                        foreach (JObject item in jobj)
-                        {
-                            string program = item.ContainsKey("program") ? item["program"].Value<string>() : null;
-                            string command = item["command"].Value<string>();
-
-                            if (program == null)
-                            {
-                                if (OsInfo.instance().OsType == "win32")
-                                {
-                                    program = "cmd";
-                                    command = "/C \"" + command + "\"";
-                                }
-                                else
-                                {
-                                    program = "/bin/bash";
-                                    command = "-c \"" + command + "\"";
-                                }
-                            }
-
-                            cmds.Add(new CommandInfo {
-                                title = item["title"].Value<string>(),
-                                program = program,
-                                command = command,
-                                order = item.ContainsKey("order") ? item["order"].Value<int>() : 100,
-                                ignoreFailed = item.ContainsKey("ignoreFailed") ? item["ignoreFailed"].Value<bool>() : false,
-                            });
-                        }
-
-                        cmds.Sort(delegate (CommandInfo x, CommandInfo y) {
-                            return x.order - y.order;
-                        });
-
-                        DateTime cur_time = DateTime.Now;
-                        infoWithLable("", false);
-                        info("start building at " + cur_time.ToString("yyyy-MM-dd HH:mm:ss") + "\r\n");
-
-                        /* exec runner */
-                        int exitCode = executeCommands(cmds.ToArray());
-
-                        TimeSpan tSpan = DateTime.Now.Subtract(cur_time);
-
-                        log("");
-                        doneWithLable("", false);
-
-                        if (exitCode == CODE_DONE)
-                        {
-                            success("build successfully !, elapsed time " + string.Format("{0}:{1}:{2}", tSpan.Hours, tSpan.Minutes, tSpan.Seconds), false);
-                        }
-                        else
-                        {
-                            error("build failed !, elapsed time " + string.Format("{0}:{1}:{2}", tSpan.Hours, tSpan.Minutes, tSpan.Seconds), false);
-                        }
-
-                        log("", true);
-                        log("");
-
-                        return exitCode;
-                    }
-                    catch (Exception err)
-                    {
-                        errorWithLable("runner aborted, msg: " + err.Message);
-                        return CODE_ERR;
-                    }
-                }
-
                 /* load params */
                 try
                 {
@@ -2788,11 +2725,6 @@ namespace unify_builder
                 {
                     modeList.Remove(BuilderMode.FAST);
                 }
-
-                if (cliArgs.OnlyDumpArgs)
-                {
-                    modeList.Add(BuilderMode.DEBUG);
-                }
             }
             catch (Exception err)
             {
@@ -2807,7 +2739,7 @@ namespace unify_builder
             {
                 log("start generating compiler database ...");
             }
-            else if (checkMode(BuilderMode.DEBUG))
+            else if (cliArgs.OnlyPrintArgs)
             {
                 // nothing todo
             }
@@ -2907,7 +2839,7 @@ namespace unify_builder
                     bindirAbsPath = toolchainRoot,
                     outpath = outDir,
                     cwd = projectRoot,
-                    testMode = checkMode(BuilderMode.DEBUG),
+                    testMode = cliArgs.OnlyPrintArgs,
                     compiler_prefix = COMPILER_CMD_PREFIX,
                     srcParams = srcParams,
                     outDirTree = true
@@ -3110,21 +3042,14 @@ namespace unify_builder
                 {
                     string basecli;
 
-                    basecli = cmdGen.fromCFile("<c_file>", true).commandLine;
-                    basecli = Regex.Replace(basecli, @"[^\s]+<c_file>[^\s]+", "");
+                    basecli = cmdGen.fromCFile("<c_file>", true).baseArgs;
                     setEnvValue("EIDE_CUR_COMPILER_CC_BASE_ARGS", basecli);
 
-                    basecli = cmdGen.fromCppFile("<cxx_file>", true).commandLine;
-                    basecli = Regex.Replace(basecli, @"[^\s]+<cxx_file>[^\s]+", "");
+                    basecli = cmdGen.fromCppFile("<cxx_file>", true).baseArgs;
                     setEnvValue("EIDE_CUR_COMPILER_CXX_BASE_ARGS", basecli);
 
-                    basecli = cmdGen.fromAsmFile("<asm_file>", true).commandLine;
-                    basecli = Regex.Replace(basecli, @"[^\s]+<asm_file>[^\s]+", "");
+                    basecli = cmdGen.fromAsmFile("<asm_file>", true).baseArgs;
                     setEnvValue("EIDE_CUR_COMPILER_AS_BASE_ARGS", basecli);
-
-                    basecli = cmdGen.genLinkCommand(new string[] { "<obj_1>" }, true).commandLine;
-                    basecli = Regex.Replace(basecli, @"[^\s]+<obj_1>[^\s]+", "");
-                    setEnvValue("EIDE_CUR_COMPILER_LD_BASE_ARGS", basecli);
                 }
 
                 // preset env vars for tasks
@@ -3149,7 +3074,7 @@ namespace unify_builder
                 addCliVar("re:ToolchainRoot", Utility.toRelativePath(projectRoot, toolchainRoot) ?? toolchainRoot);
                 addCliVar("re:CompilerFolder", Utility.toRelativePath(projectRoot, CC_DIR) ?? CC_DIR);
 
-                if (checkMode(BuilderMode.DEBUG))
+                if (cliArgs.OnlyPrintArgs)
                 {
                     CmdGenerator.CmdInfo cmdInf;
 
@@ -3193,9 +3118,7 @@ namespace unify_builder
                     throw new Exception("Not found toolchain directory !, [path] : \"" + toolchainRoot + "\"");
                 }
 
-                // switch to project root directory
-                switchWorkDir(projectRoot);
-
+                // 生成 makefile 要放在 rebuild task 之前
                 if (cliArgs.OutputMakefile)
                 {
                     var builderVersion = Assembly.GetExecutingAssembly().GetName().Version;
@@ -3228,10 +3151,10 @@ namespace unify_builder
                         .AppendLine();
 
                     // setup compiler
-                    makefileCompilers.Add("CC",  Utility.toUnixPath(CC_PATH));
-                    makefileCompilers.Add("AS",  Utility.toUnixPath(AS_PATH));
+                    makefileCompilers.Add("CC", Utility.toUnixPath(CC_PATH));
+                    makefileCompilers.Add("AS", Utility.toUnixPath(AS_PATH));
                     makefileCompilers.Add("CXX", Utility.toUnixPath(CXX_PATH));
-                    makefileCompilers.Add("LD",  Utility.toUnixPath(LD_PATH));
+                    makefileCompilers.Add("LD", Utility.toUnixPath(LD_PATH));
                     if (cmdGen.hasOtherUtilTool("linker-lib"))
                     {
                         var p = cmdGen.getOtherUtilToolFullPath("linker-lib");
@@ -3296,14 +3219,15 @@ namespace unify_builder
                         .AppendLine();
                 }
 
-                // run tasks before build
-                if (runTasks("PRE-BUILD TASKS", "beforeBuildTasks") != CODE_DONE)
+                // run prebuild task
+                if (!cliArgs.OnlyDumpCompilerDB)
                 {
-                    throw new Exception("Run Tasks Failed !, Stop Build !");
+                    switchWorkDir(projectRoot);
+                    var ret = runTasks("PRE-BUILD TASKS", "beforeBuildTasks");
+                    resetWorkDir();
+                    if (ret != CODE_DONE)
+                        throw new Exception("Run Tasks Failed !, Stop Build !");
                 }
-
-                // reset work directory
-                resetWorkDir();
 
                 if (!cliArgs.OnlyDumpCompilerDB)
                 {
@@ -4063,6 +3987,72 @@ namespace unify_builder
             unlockLogs();
 
             return CODE_DONE;
+        }
+
+        static int RunCommandsJson()
+        {
+            List<CommandInfo> cmds = new(16);
+            JArray jobj = JArray.Parse(
+                File.ReadAllText(cliArgs.RunCommandsJsonPath, RuntimeEncoding.instance().UTF8)
+            );
+
+            foreach (JObject item in jobj)
+            {
+                string program = item.ContainsKey("program") ? item["program"].Value<string>() : null;
+                string command = item["command"].Value<string>();
+
+                if (program == null)
+                {
+                    if (OsInfo.instance().OsType == "win32")
+                    {
+                        program = "cmd";
+                        command = "/C \"" + command + "\"";
+                    }
+                    else
+                    {
+                        program = "/bin/bash";
+                        command = "-c \"" + command + "\"";
+                    }
+                }
+
+                cmds.Add(new CommandInfo {
+                    title = item["title"].Value<string>(),
+                    program = program,
+                    command = command,
+                    order = item.ContainsKey("order") ? item["order"].Value<int>() : 100,
+                    ignoreFailed = item.ContainsKey("ignoreFailed") && item["ignoreFailed"].Value<bool>(),
+                });
+            }
+
+            cmds.Sort(delegate (CommandInfo x, CommandInfo y) {
+                return x.order - y.order;
+            });
+
+            DateTime cur_time = DateTime.Now;
+            infoWithLable("", false);
+            info("start building at " + cur_time.ToString("yyyy-MM-dd HH:mm:ss") + "\r\n");
+
+            /* exec runner */
+            int exitCode = executeCommands(cmds.ToArray());
+
+            TimeSpan tSpan = DateTime.Now.Subtract(cur_time);
+
+            log("");
+            doneWithLable("", false);
+
+            if (exitCode == CODE_DONE)
+            {
+                success("build successfully !, elapsed time " + string.Format("{0}:{1}:{2}", tSpan.Hours, tSpan.Minutes, tSpan.Seconds), false);
+            }
+            else
+            {
+                error("build failed !, elapsed time " + string.Format("{0}:{1}:{2}", tSpan.Hours, tSpan.Minutes, tSpan.Seconds), false);
+            }
+
+            log("", true);
+            log("");
+
+            return exitCode;
         }
 
         static string memorysize2str(uint size)
@@ -5667,25 +5657,6 @@ namespace unify_builder
             }
         }
 
-        static void toAbsolutePaths(string rootDir, JArray jArr)
-        {
-            string[] incList = jArr.ToObject<string[]>();
-
-            jArr.RemoveAll();
-
-            foreach (string _path in incList)
-            {
-                if (Utility.isAbsolutePath(_path))
-                {
-                    jArr.Add(_path);
-                }
-                else
-                {
-                    jArr.Add(rootDir + Path.DirectorySeparatorChar + _path);
-                }
-            }
-        }
-
         static string quotePath(string path)
         {
             if (path.Contains(' ') && !path.StartsWith('"'))
@@ -5717,7 +5688,7 @@ namespace unify_builder
 
         static void lockLogs()
         {
-            if (cliArgs.OnlyDumpCompilerDB || cliArgs.OnlyDumpArgs)
+            if (cliArgs.OnlyDumpCompilerDB || cliArgs.OnlyPrintArgs)
             {
                 if (logStream == null)
                 {
