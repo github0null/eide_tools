@@ -1887,31 +1887,28 @@ namespace unify_builder
             // delete whitespace
             commands.RemoveAll(delegate (string _command) { return string.IsNullOrWhiteSpace(_command); });
 
-            // repleace eide cmd vars and system envs
-            {
-                string fOutDir = Path.GetDirectoryName(outName);
-                string fOutNam = Path.GetFileName(outName);
+            // function: resolveVariables
+            string fOutDir = Path.GetDirectoryName(outName);
+            string fOutNam = Path.GetFileName(outName);
+            string reOutDir = toRelativePathForCompilerArgs(fOutDir, false, false);
+            string reSrcDir = toRelativePathForCompilerArgs(srcDir, false, false);
+            var resolveVariables = delegate (string cmd) {
+                var t = expandArgs(cmd);
+                t = t.Replace("${OutName}", fOutNam)
+                    .Replace("${OutDir}", reOutDir)
+                    .Replace("${FileName}", srcName)
+                    .Replace("${FileDir}", reSrcDir)
+                    .Replace("${outName}", fOutNam)
+                    .Replace("${outDir}", reOutDir)
+                    .Replace("${fileName}", srcName)
+                    .Replace("${fileDir}", reSrcDir);
+                t = Program.replaceEnvVariable(t);
+                return t;
+            };
 
-                string reOutDir = toRelativePathForCompilerArgs(fOutDir, false, false);
-                string reSrcDir = toRelativePathForCompilerArgs(srcDir, false, false);
-
-                for (int i = 0; i < commands.Count; i++)
-                {
-                    commands[i] = expandArgs(commands[i]);
-
-                    commands[i] = commands[i]
-                        .Replace("${OutName}", fOutNam)
-                        .Replace("${OutDir}", reOutDir)
-                        .Replace("${FileName}", srcName)
-                        .Replace("${FileDir}", reSrcDir)
-                        .Replace("${outName}", fOutNam)
-                        .Replace("${outDir}", reOutDir)
-                        .Replace("${fileName}", srcName)
-                        .Replace("${fileDir}", reSrcDir);
-
-                    commands[i] = Program.replaceEnvVariable(commands[i]);
-                }
-            }
+            // replace eide cmd vars and system envs
+            for (int i = 0; i < commands.Count; i++)
+                commands[i] = resolveVariables(commands[i]);
 
             string sourceBaseArgs = compilerAttr_commandPrefix + string.Join(" ", commands);
 
@@ -1923,7 +1920,7 @@ namespace unify_builder
                     var val = getCommandValue((JObject)cModel["$listPath"], "");
                     val = val.Replace("${listPath}", toRelativePathForCompilerArgs(listPath, isQuote));
                     if (!string.IsNullOrWhiteSpace(val))
-                        commands.Add(val);
+                        commands.Add(resolveVariables(val));
                 }
 
                 string outputFormat = cModel["$output"].Value<string>();
@@ -1951,7 +1948,7 @@ namespace unify_builder
                 var outputCmd = outputFormat
                     .Replace("${refPath}", toRelativePathForCompilerArgs(refPath, isQuote));
 
-                commands.Add(outputCmd);
+                commands.Add(resolveVariables(outputCmd));
             }
 
             string commandLines = compilerAttr_commandPrefix + string.Join(" ", commands);
