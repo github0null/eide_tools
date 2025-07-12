@@ -338,6 +338,7 @@ namespace unify_builder
         {
             public string prefix = "";
             public string body = null;
+            public string body_noval = null; // 适用于宏定义没有值的情况下，指定格式字符串
             public string suffix = "";
             public string sep = " ";
             public bool noQuotes = false;
@@ -2224,22 +2225,26 @@ namespace unify_builder
                     macro = define.Trim();
 
                     // if macro is '', skip
-                    if (string.IsNullOrWhiteSpace(macro)) continue;
+                    if (string.IsNullOrWhiteSpace(macro))
+                        continue;
 
                     string macroStr;
 
                     if (modelName == "asm")
                     {
-                        value = "1";
                         macroStr = defFormat.body
                             .Replace("${key}", macro)
-                            .Replace("${value}", value);
+                            .Replace("${value}", "1");
                     }
-                    else // delete macro fmt str suffix
+                    else
                     {
-                        macroStr = Regex
-                            .Replace(defFormat.body, @"(?<macro_key>^[^\$]*\$\{key\}).*$", "${macro_key}")
-                            .Replace("${key}", macro);
+                        if (defFormat.body_noval != null)
+                            macroStr = defFormat.body_noval
+                                .Replace("${key}", macro);
+                        else
+                            macroStr = defFormat.body
+                                .Replace("${key}", macro)
+                                .Replace("${value}", "1");
                     }
 
                     cmds.Add(macroStr);
@@ -2650,7 +2655,7 @@ namespace unify_builder
 
                 // prepare builder params
                 ERR_LEVEL = compilerModel.ContainsKey("ERR_LEVEL") ? compilerModel["ERR_LEVEL"].Value<int>() : ERR_LEVEL;
-                prepareModel();
+                prepareModel(compilerModel);
                 prepareParams(paramsObj);
 
                 // other bool options
@@ -5574,11 +5579,59 @@ namespace unify_builder
             }
         }
 
-        static void prepareModel()
+        /// <summary>
+        /// 做一些预处理，比如将路径转换到当前 OS 要求的格式
+        /// </summary>
+        /// <param name="model"></param>
+        /// <returns></returns>
+        static void prepareModel(JObject model)
         {
-            var globals = (JObject)compilerModel["global"];
-            var groups = (JObject)compilerModel["groups"];
+            var globals = (JObject)model["global"];
+            var groups  = (JObject)model["groups"];
 
+            // 将路径转换到当前OS的格式
+            foreach (var kv in groups)
+            {
+                var grp = (JObject)kv.Value;
+
+                if (grp.ContainsKey("$path"))
+                {
+                    if (OsInfo.instance().OsType == "win32")
+                        grp["$path"] = grp["$path"].Value<string>().Replace('/', '\\') + ".exe";
+                }
+
+                if (grp.ContainsKey("$outputBin"))
+                {
+                    foreach (JObject item in (JArray)grp["$outputBin"])
+                    {
+                        if (OsInfo.instance().OsType == "win32")
+                            item["toolPath"] = item["toolPath"].Value<string>().Replace('/', '\\') + ".exe";
+
+                        // 根据OS环境选择 commmand
+                        if (OsInfo.instance().OsType == "win32" && item.ContainsKey("command.win32"))
+                            item["command"] = item["command.win32"].Value<string>();
+                        else if (OsInfo.instance().OsType != "win32" && item.ContainsKey("command.unix"))
+                            item["command"] = item["command.unix"].Value<string>();
+                    }
+                }
+                
+                if (grp.ContainsKey("$extraCommand"))
+                {
+                    foreach (JObject item in (JArray)grp["$extraCommand"])
+                    {
+                        if (OsInfo.instance().OsType == "win32")
+                            item["toolPath"] = item["toolPath"].Value<string>().Replace('/', '\\') + ".exe";
+
+                        // 根据OS环境选择 commmand
+                        if (OsInfo.instance().OsType == "win32" && item.ContainsKey("command.win32"))
+                            item["command"] = item["command.win32"].Value<string>();
+                        else if (OsInfo.instance().OsType != "win32" && item.ContainsKey("command.unix"))
+                            item["command"] = item["command.unix"].Value<string>();
+                    }
+                }
+            }
+
+            // 将所有 global 的配置插入到相应的 group 中去
             foreach (var ele in globals)
             {
                 if (!((JObject)ele.Value).ContainsKey("group"))
@@ -5608,7 +5661,7 @@ namespace unify_builder
             {
                 foreach (var define in ((JArray)compilerModel["defines"]).Values<string>())
                 {
-                    ((JArray)paramsObj["defines"]).Add(define);
+                    ((JArray)_params["defines"]).Add(define);
                 }
             }
         }
