@@ -1252,7 +1252,9 @@ namespace unify_builder
                 string[] cont = new string[] {
                     "tool: " + toolId,
                     "fileName: " + Path.GetFileName(mapPath),
-                    "elfName: " + Path.GetFileName(outPath)
+                    "elfName: " + Path.GetFileName(outPath),
+                    "compilerName: " + compilerName,
+                    "compilerFullName: " + compilerFullName,
                 };
 
                 File.WriteAllLines(outName + ".map.view", cont, RuntimeEncoding.instance().UTF8);
