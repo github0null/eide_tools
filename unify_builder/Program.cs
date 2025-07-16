@@ -1246,15 +1246,15 @@ namespace unify_builder
                 }
             }
 
-            // gen .map.view for eide
+            // gen .map.view for eide (yaml format)
             try
             {
                 string[] cont = new string[] {
-                    "tool: " + toolId,
-                    "fileName: " + Path.GetFileName(mapPath),
-                    "elfName: " + Path.GetFileName(outPath),
-                    "compilerName: " + compilerName,
-                    "compilerFullName: " + compilerFullName,
+                    $"tool: {toolId}",
+                    $"fileName: '{Path.GetFileName(mapPath)}'",
+                    $"elfName: '{Path.GetFileName(outPath)}'",
+                    $"compilerName: '{compilerName}'",
+                    $"compilerFullName: '{compilerFullName}'",
                 };
 
                 File.WriteAllLines(outName + ".map.view", cont, RuntimeEncoding.instance().UTF8);
