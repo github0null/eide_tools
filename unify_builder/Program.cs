@@ -15,6 +15,10 @@ using System.Threading.Tasks;
 using CommandLine;
 using CommandLine.Text;
 using DotNet.Globbing;
+using Microsoft.Data.Sqlite;
+
+#pragma warning disable IDE0063 // 禁用：使用简单的 "using" 语句
+#pragma warning disable IDE1006 // 禁用：命名大小写提示
 
 // 有关程序集的一般信息由以下
 // 控制。更改这些特性值可修改
@@ -1989,12 +1993,10 @@ namespace unify_builder
                 "\"" + Program.replaceEnvVariable(exeFullPath) + "\" "
                      + Program.replaceEnvVariable(compilerArgs);
 
-            // check .cmd file to determine source file need recompile
-            FileInfo cmdFile = new(outPath + ".cmd");
-            if (File.Exists(cmdFile.FullName))
+            // check cmd to determine source file need recompile
+            if (Program.table_compilerCmds.TryGetValue(outPath, out string oldCmd))
             {
-                buildArgs.sourceArgsChanged = !File.ReadAllText(
-                    cmdFile.FullName, RuntimeEncoding.instance().UTF8).Equals(buildArgs.shellCommand);
+                buildArgs.sourceArgsChanged = !oldCmd.Equals(buildArgs.shellCommand);
             }
 
             return buildArgs;
@@ -2350,6 +2352,7 @@ namespace unify_builder
         static bool enableNormalOut = true;
         static bool showRelativePathOnLog = false;
         static bool colorRendererEnabled = true;
+        static bool isRebuild = false;
 
         static HashSet<BuilderMode> modeList = new();
 
@@ -2357,6 +2360,11 @@ namespace unify_builder
         static StringBuilder makefileOutput = new(4096);
         static Dictionary<string, string> makefileCompilers = new(8);
         static BlockingCollection<Task> ioAsyncTask = new();
+
+        // 编译数据库路径，用于增量编译
+        static string builderDatabasePath = null;
+        // 用于存储上次构建后旧的编译命令，以便增量编译时判断是否需要重新编译
+        public static ConcurrentDictionary<string, string> table_compilerCmds = new(Environment.ProcessorCount * 2, 4096);
 
         enum BuilderMode
         {
@@ -2654,6 +2662,10 @@ namespace unify_builder
                 rom_max_size = paramsObj.ContainsKey("rom") ? paramsObj["rom"].Value<int>() : -1;
                 showRelativePathOnLog = paramsObj.ContainsKey("showRepathOnLog") ? paramsObj["showRepathOnLog"].Value<bool>() : false;
                 refJsonName = paramsObj.ContainsKey("sourceMapName") ? paramsObj["sourceMapName"].Value<string>() : "ref.json";
+
+                // load builder database
+                builderDatabasePath = Path.Combine(outDir, ".obj", "builder.db");
+                loadBuilderDatabase(builderDatabasePath);
 
                 // prepare builder params
                 ERR_LEVEL = compilerModel.ContainsKey("ERR_LEVEL") ? compilerModel["ERR_LEVEL"].Value<int>() : ERR_LEVEL;
@@ -3472,7 +3484,6 @@ namespace unify_builder
                     }
                     else
                     {
-                        // 如果编译器位置已经更改，则需要重新编译
                         CheckDiffRes res = checkDiff(cmdGen.getCompilerId(), commands);
                         src_count_c   = res.cCount;
                         src_count_cpp = res.cppCount;
@@ -3485,8 +3496,13 @@ namespace unify_builder
                 /* rebuild mode */
                 else
                 {
+                    isRebuild = true;
                     infoWithLable("file statistics (rebuild mode)\r\n");
                 }
+
+                // 如果是 rebuild 模式则清空旧的 commands
+                if (isRebuild)
+                    table_compilerCmds.Clear();
 
                 int totalFilesCount = (src_count_c + src_count_cpp + src_count_asm + libList.Count);
 
@@ -3575,9 +3591,7 @@ namespace unify_builder
                         {
                             if (!cliArgs.DryRun)
                             {
-                                FileInfo cmdFile = new(cmdInfo.outPath + ".cmd");
-                                var t = File.WriteAllTextAsync(cmdFile.FullName, cmdInfo.shellCommand, RuntimeEncoding.instance().UTF8);
-                                ioAsyncTask.Add(t);
+                                table_compilerCmds.AddOrUpdate(cmdInfo.outPath, cmdInfo.shellCommand, (k, v) => cmdInfo.shellCommand);
                             }
                         }
                     }
@@ -3936,9 +3950,12 @@ namespace unify_builder
                 log("", true);
                 log("");
 
+                // save db
+                if (!cliArgs.DryRun)
+                    saveBuilderCommands(builderDatabasePath, true);
+
                 // dump log
                 appendLogs("[done]", "\tbuild successfully !");
-
                 dumpCompilerLog();
             }
             catch (Exception err)
@@ -3952,9 +3969,12 @@ namespace unify_builder
                 // reset work dir when failed
                 resetWorkDir();
 
+                // save db
+                if (!cliArgs.DryRun)
+                    saveBuilderCommands(builderDatabasePath, false);
+
                 // dump error log
                 appendErrLogs(err, errLogs.ToArray());
-
                 dumpCompilerLog();
 
                 // close and unlock log file
@@ -3991,6 +4011,81 @@ namespace unify_builder
             unlockLogs();
 
             return CODE_DONE;
+        }
+
+        static void loadBuilderDatabase(string dbpath)
+        {
+            if (!File.Exists(dbpath))
+                return;
+
+            try
+            {
+                using (var connection = new SqliteConnection($"Data Source=\"{dbpath}\""))
+                {
+                    connection.Open();
+                    var sql = connection.CreateCommand();
+                    sql.CommandText = @"SELECT * FROM cmds;";
+                    using (var reader = sql.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            var objpath = reader["objpath"].ToString();
+                            var command = reader["command"].ToString();
+                            table_compilerCmds.TryAdd(objpath, command);
+                        }
+                    }
+                }
+            }
+            catch (SqliteException err)
+            {
+                warnWithLable($"[E{err.SqliteExtendedErrorCode.ToString("D4")}] {err.Message}\r\n");
+            }
+        }
+
+        static void saveBuilderCommands(string dbpath, bool is_build_ok)
+        {
+            using (var connection = new SqliteConnection($"Data Source=\"{dbpath}\""))
+            {
+                connection.Open();
+
+                // table: cmds
+                {
+                    var sql = connection.CreateCommand();
+                    sql.CommandText =
+                        @"
+                            CREATE TABLE IF NOT EXISTS cmds (
+                                objpath TEXT PRIMARY KEY,
+                                command TEXT
+                            );
+                        ";
+                    sql.ExecuteNonQuery();
+                }
+
+                using (var transaction = connection.BeginTransaction())
+                {
+                    var sql = connection.CreateCommand();
+                    sql.CommandText =
+                        @"INSERT INTO cmds (objpath, command) VALUES ($path, $cmds) 
+                            ON CONFLICT(objpath) DO UPDATE SET command = $cmds;";
+
+                    var arg_path = sql.CreateParameter();
+                    arg_path.ParameterName = "$path";
+                    sql.Parameters.Add(arg_path);
+
+                    var arg_cmds = sql.CreateParameter();
+                    arg_cmds.ParameterName = "$cmds";
+                    sql.Parameters.Add(arg_cmds);
+
+                    foreach (var item in table_compilerCmds)
+                    {
+                        arg_path.Value = item.Key;
+                        arg_cmds.Value = item.Value;
+                        sql.ExecuteNonQuery();
+                    }
+
+                    transaction.Commit();
+                }
+            }
         }
 
         static int RunCommandsJson()
@@ -5073,9 +5168,7 @@ namespace unify_builder
                     {
                         if (!cliArgs.DryRun)
                         {
-                            FileInfo cmdFile = new(ccArgs.outPath + ".cmd");
-                            var t = File.WriteAllTextAsync(cmdFile.FullName, ccArgs.shellCommand, RuntimeEncoding.instance().UTF8);
-                            ioAsyncTask.Add(t);
+                            table_compilerCmds.AddOrUpdate(ccArgs.outPath, ccArgs.shellCommand, (k, v) => ccArgs.shellCommand);
                         }
                     }
                 }
@@ -5452,6 +5545,8 @@ namespace unify_builder
                 log("");
                 warnWithLable("Check difference failed !, will rollback to rebuild mode.");
                 log("");
+
+                isRebuild = true;
 
                 // fill all cmds
                 res = new CheckDiffRes();
