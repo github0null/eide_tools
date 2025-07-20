@@ -1259,6 +1259,7 @@ namespace unify_builder
                     $"elfName: '{Path.GetFileName(outPath)}'",
                     $"compilerName: '{compilerName}'",
                     $"compilerFullName: '{compilerFullName}'",
+                    $"compilerPath: '{getActivedToolFullPath("c")}'"
                 };
 
                 File.WriteAllLines(outName + ".map.view", cont, RuntimeEncoding.instance().UTF8);
