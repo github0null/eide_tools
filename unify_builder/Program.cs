@@ -233,8 +233,10 @@ namespace unify_builder
 
             CRLF = OsType == "win32" ? "\r\n" : "\n";
 
+            // 注意：SysCmdLenLimit 只是一个保守估计值，不需要太精确
+            // 一旦参数过长，我们应该优先考虑使用文件传输，而不是命令行
             if (OsType == "win32")
-                SysCmdLenLimit = 8 * 1024;
+                SysCmdLenLimit = 16 * 1024;
             else
                 SysCmdLenLimit = 32 * 1024;
         }
@@ -296,7 +298,6 @@ namespace unify_builder
             public bool testMode;
             public string compiler_prefix;
             public Dictionary<string, string> srcParams;
-            public bool outDirTree; // output dir tree
         };
 
         public class CmdInfo
@@ -374,7 +375,6 @@ namespace unify_builder
         private readonly string toolId;     // compiler ID
 
         private readonly bool useUnixPath; // whether use unix path in compiler options
-        private readonly bool outDirTree;  // whether generate a tree struct in build folder
 
         private readonly string outDir; // output root folder
         private readonly string binDir; // compiler root folder (with tail '/'), default: '%TOOL_DIR%/'
@@ -407,7 +407,6 @@ namespace unify_builder
             cwd = option.cwd;
             compilerAttr_commandPrefix = option.compiler_prefix;
             srcParams = option.srcParams;
-            outDirTree = option.outDirTree;
 
             toolId = cModel["id"].Value<string>();
             useUnixPath = cModel.ContainsKey("useUnixPath") ? cModel["useUnixPath"].Value<bool>() : false;
@@ -785,16 +784,6 @@ namespace unify_builder
             }
         }
 
-        public CmdInfo fromCFile(string fpath, bool onlyCmd = false)
-        {
-            return fromModel("c", "language-c", fpath, onlyCmd);
-        }
-
-        public CmdInfo fromCppFile(string fpath, bool onlyCmd = false)
-        {
-            return fromModel("cpp", "language-cpp", fpath, onlyCmd);
-        }
-
         private void formatVarInCompilerOptions(JObject model, List<string> opts, JObject[] userParams)
         {
             var matcher = new Regex(@"\$\{([^\}]+)\}", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -866,7 +855,17 @@ namespace unify_builder
             return false;
         }
 
-        public CmdInfo fromAsmFile(string fpath, bool onlyCmd = false)
+        public CmdInfo fromCFile(string fpath, bool onlyDumpArgs = false)
+        {
+            return fromModel("c", "language-c", fpath, onlyDumpArgs);
+        }
+
+        public CmdInfo fromCppFile(string fpath, bool onlyDumpArgs = false)
+        {
+            return fromModel("cpp", "language-cpp", fpath, onlyDumpArgs);
+        }
+
+        public CmdInfo fromAsmFile(string fpath, bool onlyDumpArgs = false)
         {
             string asmType = "asm";
 
@@ -881,7 +880,7 @@ namespace unify_builder
                 }
             }
 
-            return fromModel(asmType, null, fpath, onlyCmd);
+            return fromModel(asmType, null, fpath, onlyDumpArgs);
         }
 
         public List<string> getMapMatcher()
@@ -1714,7 +1713,15 @@ namespace unify_builder
         private readonly Regex compilerOpts_overrideExprMatcher = new(@"\$<override:(.+?)>", RegexOptions.Compiled);
         private readonly Regex compilerOpts_replaceExprMatcher = new(@"\$<replace:(?<old>.+?)/(?<new>.*?)>", RegexOptions.Compiled);
 
-        private CmdInfo fromModel(string modelName, string langName, string fpath, bool dryRun = false)
+        /// <summary>
+        /// 生成编译参数
+        /// </summary>
+        /// <param name="modelName"></param>
+        /// <param name="langName"></param>
+        /// <param name="fpath"></param>
+        /// <param name="onlyDumpArgs">如果为True, 则仅仅生成编译参数，不做其他的处理，比如：创建输出目录</param>
+        /// <returns></returns>
+        private CmdInfo fromModel(string modelName, string langName, string fpath, bool onlyDumpArgs = false)
         {
             JObject cModel = models[modelName];
             JObject cParams = paramObj[modelName];
@@ -1741,13 +1748,13 @@ namespace unify_builder
 
             //--
 
-            // create obj root dir
-            string _objRootDir = outDir + Path.DirectorySeparatorChar + ".obj";
-            Directory.CreateDirectory(_objRootDir);
-
+            string _objRootDir  = outDir + Path.DirectorySeparatorChar + ".obj";
             string _outFileName = null; // a repath for source (without suffix), like: 'src/app/main'
-            if (outDirTree) // generate dir tree struct
             {
+                // create obj root dir
+                if (!onlyDumpArgs)
+                    Directory.CreateDirectory(_objRootDir);
+
                 // it's a relative path
                 if (!Utility.isAbsolutePath(srcPath))
                 {
@@ -1763,7 +1770,8 @@ namespace unify_builder
 
                     if (!string.IsNullOrWhiteSpace(fDir))
                     {
-                        Directory.CreateDirectory(_objRootDir + Path.DirectorySeparatorChar + fDir);
+                        if (!onlyDumpArgs)
+                            Directory.CreateDirectory(_objRootDir + Path.DirectorySeparatorChar + fDir);
                         _outFileName = fDir + Path.DirectorySeparatorChar + srcName;
                     }
                     else // no parent dir
@@ -1779,15 +1787,10 @@ namespace unify_builder
                     // convert 'c:\xxx\a.c' -> '<build_out_dir>/c/xxx/a.??'
                     Regex drvReplacer = new Regex(@"^(?<drv>[a-z]):/", RegexOptions.IgnoreCase);
                     string fDir = Utility.toLocalPath(drvReplacer.Replace(fmtSrcDir, "${drv}/"));
-                    Directory.CreateDirectory(_objRootDir + Path.DirectorySeparatorChar + fDir);
+                    if (!onlyDumpArgs)
+                        Directory.CreateDirectory(_objRootDir + Path.DirectorySeparatorChar + fDir);
                     _outFileName = fDir + Path.DirectorySeparatorChar + srcName;
                 }
-            }
-
-            // generate to output root directly
-            else
-            {
-                _outFileName = srcName;
             }
 
             string outName = getUniqueName(_objRootDir + Path.DirectorySeparatorChar + _outFileName);
@@ -1964,8 +1967,8 @@ namespace unify_builder
             string exeFullPath = getActivedToolFullPath(modelName);
 
             // 如果编译器可以从文件读取参数，且当命令行参数长度超过系统限制后，可将参数保存到文件
-            int sysCmdMaxLen = OsInfo.instance().SysCmdLenLimit - 512;
-            if (iFormat.useFile && !dryRun && compilerArgs.Length > sysCmdMaxLen)
+            int sysCmdMaxLen = OsInfo.instance().SysCmdLenLimit - 1024; // 'MAX - 1024' 为环境变量替换预留一些空间
+            if (iFormat.useFile && !onlyDumpArgs && compilerArgs.Length > sysCmdMaxLen)
             {
                 FileInfo paramFile = new(outName + paramsSuffix);
                 File.WriteAllText(paramFile.FullName, compilerArgs, encodings[modelName]);
@@ -2001,11 +2004,6 @@ namespace unify_builder
             }
 
             return buildArgs;
-        }
-
-        private string formatPathForCompilerArgs(string path)
-        {
-            return Utility.toLocalPath(path, compilerAttr_directorySeparator);
         }
 
         public string toRelativePathForCompilerArgs(string path, bool quote = true, bool addDotPrefix = true)
@@ -2665,7 +2663,7 @@ namespace unify_builder
                 refJsonName = paramsObj.ContainsKey("sourceMapName") ? paramsObj["sourceMapName"].Value<string>() : "ref.json";
 
                 // load builder database
-                builderDatabasePath = Path.Combine(outDir, ".obj", "builder.db");
+                builderDatabasePath = Path.Combine(outDir, ".obj", "objs.db");
                 loadBuilderDatabase(builderDatabasePath);
 
                 // prepare builder params
@@ -2858,8 +2856,7 @@ namespace unify_builder
                     cwd = projectRoot,
                     testMode = cliArgs.OnlyPrintArgs,
                     compiler_prefix = COMPILER_CMD_PREFIX,
-                    srcParams = srcParams,
-                    outDirTree = true
+                    srcParams = srcParams
                 });
 
                 // ingnore keil c51 normal output
@@ -3304,17 +3301,17 @@ namespace unify_builder
 
                     if (cFileFilter.IsMatch(srcPath))
                     {
-                        cmdInf = cmdGen.fromCFile(srcPath);
+                        cmdInf = cmdGen.fromCFile(srcPath, cliArgs.OnlyDumpCompilerDB);
                         src_count_c++;
                     }
                     else if (cppFileFilter.IsMatch(srcPath))
                     {
-                        cmdInf = cmdGen.fromCppFile(srcPath);
+                        cmdInf = cmdGen.fromCppFile(srcPath, cliArgs.OnlyDumpCompilerDB);
                         src_count_cpp++;
                     }
                     else if (asmFileFilter.IsMatch(srcPath))
                     {
-                        cmdInf = cmdGen.fromAsmFile(srcPath);
+                        cmdInf = cmdGen.fromAsmFile(srcPath, cliArgs.OnlyDumpCompilerDB);
                         src_count_asm++;
                     }
                     else
@@ -4928,7 +4925,7 @@ namespace unify_builder
 
             Process process = new();
             process.StartInfo.FileName = replaceEnvVariable(filename);
-            process.StartInfo.Arguments = replaceEnvVariable(args);
+            process.StartInfo.Arguments = replaceEnvVariable(args); // 注意：分配给 Arguments 属性的字符串的长度必须小于 32,699。
             process.StartInfo.UseShellExecute = false;
             process.StartInfo.RedirectStandardOutput = true;
             process.StartInfo.RedirectStandardError = true;
