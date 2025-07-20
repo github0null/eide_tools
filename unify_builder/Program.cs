@@ -3220,7 +3220,7 @@ namespace unify_builder
                     makefileOutput
                         .AppendLine("all: postbuild")
                         .AppendLine("\t@echo ==========")
-                        .AppendLine("\t@echo $(COLOR_SUC)\"ALL DONE.\"$(COLOR_END)")
+                        .AppendLine("\t@echo -e $(COLOR_SUC)\"ALL DONE.\"$(COLOR_END)")
                         .AppendLine("\t@echo ==========")
                         .AppendLine();
 
@@ -3716,7 +3716,7 @@ namespace unify_builder
                     makefileOutput
                         .AppendLine($"objs = {string.Join(' ', objdeps)}")
                         .AppendLine("elf: prebuild $(objs) Makefile")
-                        .AppendLine($"\t@echo $(COLOR_INF)\"linking {elfpath} ...\"$(COLOR_END)");
+                        .AppendLine($"\t@echo -e $(COLOR_INF)\"linking {elfpath} ...\"$(COLOR_END)");
 
                     if (cmdGen.getCompilerId() == "SDCC" && linkInfo.sdcc_bundleLibArgs != null)
                     {
@@ -3727,7 +3727,7 @@ namespace unify_builder
 
                     if (extraLinkCmds.Length > 0)
                     {
-                        makefileOutput.AppendLine($"\t@echo $(COLOR_INF)\"execute extra link command ...\"$(COLOR_END)");
+                        makefileOutput.AppendLine($"\t@echo -e $(COLOR_INF)\"execute extra link command ...\"$(COLOR_END)");
 
                         foreach (var cmd in extraLinkCmds)
                         {
@@ -3926,7 +3926,7 @@ namespace unify_builder
 
                     if (commandList != null && commandList.Length > 0)
                     {
-                        makefileOutput.AppendLine($"\t@echo $(COLOR_INF)\"make bin files ...\"$(COLOR_END)");
+                        makefileOutput.AppendLine($"\t@echo -e $(COLOR_INF)\"make bin files ...\"$(COLOR_END)");
 
                         foreach (var cmd in commandList)
                         {
@@ -5226,11 +5226,11 @@ namespace unify_builder
                         if (fieldName == "beforeBuildTasks")
                             makefileOutput
                                 .AppendLine("prebuild:")
-                                .AppendLine("\t@echo $(COLOR_INF)\"prebuild ...\"$(COLOR_END)");
+                                .AppendLine("\t@echo -e $(COLOR_INF)\"prebuild ...\"$(COLOR_END)");
                         else
                             makefileOutput
                                 .AppendLine("postbuild: bin")
-                                .AppendLine("\t@echo $(COLOR_INF)\"postbuild ...\"$(COLOR_END)");
+                                .AppendLine("\t@echo -e $(COLOR_INF)\"postbuild ...\"$(COLOR_END)");
                     }
 
                     if (taskList.Count == 0)
