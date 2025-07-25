@@ -3156,11 +3156,12 @@ namespace unify_builder
                     // dump informations
                     makefileOutput
                         .AppendLine("# Usage:")
-                        .AppendLine("#  - Build:\tmake COMPILER_DIR=<dir path>")
+                        .AppendLine("#  - Build:\tmake prebuild && make COMPILER_DIR=<dir path>")
                         .AppendLine("#  - Clean:\tmake clean")
                         .AppendLine()
                         .AppendLine("# Targets Dependences Chain:")
-                        .AppendLine("#  all -> postbuild -> bin -> elf -> prebuild, *.o ...")
+                        .AppendLine("#  prebuild")
+                        .AppendLine("#  all -> postbuild -> bin -> elf -> *.o")
                         .AppendLine();
 
                     // verbose mode
@@ -3188,13 +3189,16 @@ namespace unify_builder
                     var dirvarValue = Utility.toUnixPath(toolchainRoot);
                     if (OsInfo.instance().OsType == "win32") // on Win32, conv 'C:\xxx' -> /C/xx for GNU make
                         dirvarValue = Regex.Replace(dirvarValue, @"^([a-zA-Z]):/", "/$1/");
+                    if (dirvarValue.Contains(' '))
+                        dirvarValue = $"\"{dirvarValue}\"";
                     makefileOutput.AppendLine($"COMPILER_DIR ?= {dirvarValue}");
                     makefileOutput
-                        .AppendLine("_PATH_TMP:=$(COMPILER_DIR)/bin:$(PATH)")
-                        .AppendLine("export PATH=$(_PATH_TMP)")
+                        .AppendLine("ifneq ($(COMPILER_DIR),)")
+                        .AppendLine("\t_PATH_TMP:=$(COMPILER_DIR)/bin:$(PATH)")
+                        .AppendLine("\texport PATH=$(_PATH_TMP)")
+                        .AppendLine("endif")
                         .AppendLine();
-                    var exeSuffix = OsInfo.instance().OsType == "win32" ? ".exe" : "";
-                    makefileOutput.AppendLine($"EXE?={exeSuffix}");
+                    makefileOutput.AppendLine($"EXE?=");
                     foreach (var item in makefileCompilers)
                     {
                         var val = Regex
@@ -3213,11 +3217,11 @@ namespace unify_builder
 
                     // color
                     makefileOutput
-                        .AppendLine("COLOR_END=\"\\e[0m\"")
-                        .AppendLine("COLOR_ERR=\"\\e[31;1m\"")
-                        .AppendLine("COLOR_WRN=\"\\e[33;1m\"")
-                        .AppendLine("COLOR_SUC=\"\\e[32;1m\"")
-                        .AppendLine("COLOR_INF=\"\\e[34;1m\"")
+                        .AppendLine("COLOR_END=\\033[0m")
+                        .AppendLine("COLOR_ERR=\\033[31;1m")
+                        .AppendLine("COLOR_WRN=\\033[33;1m")
+                        .AppendLine("COLOR_SUC=\\033[32;1m")
+                        .AppendLine("COLOR_INF=\\033[34;1m")
                         .AppendLine();
 
                     // PHONY target
@@ -3229,7 +3233,7 @@ namespace unify_builder
                     makefileOutput
                         .AppendLine("all: postbuild")
                         .AppendLine("\t@echo ==========")
-                        .AppendLine("\t@echo -e $(COLOR_SUC)\"ALL DONE.\"$(COLOR_END)")
+                        .AppendLine("\t@printf \"$(COLOR_SUC)ALL DONE.$(COLOR_END)\\n\"")
                         .AppendLine("\t@echo ==========")
                         .AppendLine();
 
@@ -3724,8 +3728,8 @@ namespace unify_builder
                     var LD = quotePath(Utility.toUnixPath(replaceEnvVariable(linkInfo.exePath)));
                     makefileOutput
                         .AppendLine($"objs = {string.Join(' ', objdeps)}")
-                        .AppendLine("elf: prebuild $(objs) Makefile")
-                        .AppendLine($"\t@echo -e $(COLOR_INF)\"linking {elfpath} ...\"$(COLOR_END)");
+                        .AppendLine("elf: $(objs) Makefile")
+                        .AppendLine($"\t@printf \"$(COLOR_INF)linking {elfpath} ...$(COLOR_END)\\n\"");
 
                     if (cmdGen.getCompilerId() == "SDCC" && linkInfo.sdcc_bundleLibArgs != null)
                     {
@@ -3736,7 +3740,7 @@ namespace unify_builder
 
                     if (extraLinkCmds.Length > 0)
                     {
-                        makefileOutput.AppendLine($"\t@echo -e $(COLOR_INF)\"execute extra link command ...\"$(COLOR_END)");
+                        makefileOutput.AppendLine($"\t@printf \"$(COLOR_INF)execute extra link command ...$(COLOR_END)\\n\"");
 
                         foreach (var cmd in extraLinkCmds)
                         {
@@ -3935,7 +3939,7 @@ namespace unify_builder
 
                     if (commandList != null && commandList.Length > 0)
                     {
-                        makefileOutput.AppendLine($"\t@echo -e $(COLOR_INF)\"make bin files ...\"$(COLOR_END)");
+                        makefileOutput.AppendLine($"\t@printf \"$(COLOR_INF)output binary files ...$(COLOR_END)\\n\"");
 
                         foreach (var cmd in commandList)
                         {
@@ -5239,11 +5243,11 @@ namespace unify_builder
                         if (fieldName == "beforeBuildTasks")
                             makefileOutput
                                 .AppendLine("prebuild:")
-                                .AppendLine("\t@echo -e $(COLOR_INF)\"prebuild ...\"$(COLOR_END)");
+                                .AppendLine("\t@printf \"$(COLOR_INF)prebuild ...$(COLOR_END)\\n\"");
                         else
                             makefileOutput
                                 .AppendLine("postbuild: bin")
-                                .AppendLine("\t@echo -e $(COLOR_INF)\"postbuild ...\"$(COLOR_END)");
+                                .AppendLine("\t@printf \"$(COLOR_INF)postbuild ...$(COLOR_END)\\n\"");
                     }
 
                     if (taskList.Count == 0)
