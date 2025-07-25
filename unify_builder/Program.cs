@@ -754,11 +754,11 @@ namespace unify_builder
                     }
                     catch (TypeErrorException err)
                     {
-                        throw new Exception("Error field type for '" + ele.Key[0] + "'", err);
+                        throw new Exception($"Error field type for key: \"{ele.Key}\". " + err.Message);
                     }
                     catch (Exception err)
                     {
-                        throw new Exception("Init command failed: '" + name + "', Key: '" + ele.Key + "' !, " + err.Message);
+                        throw new Exception($"Init command failed: \"{name}\", Key: \"{ele.Key}\". " + err.Message);
                     }
                 }
 
@@ -2067,20 +2067,15 @@ namespace unify_builder
             // check list type
             if (type == "list")
             {
-                if (value is string)
+                if ((value != null) && (value is not string) && ((value as IEnumerable<string>) == null))
                 {
-                    type = "value"; /* compatible type: 'list' and 'value' */
-                }
-                else if (value != null && (value as IEnumerable<string>) == null)
-                {
-                    throw new TypeErrorException("IEnumerable<string>");
+                    throw new TypeErrorException("value must be string or IEnumerable<string>");
                 }
             }
-
             // check other type (other type must be a string)
-            else if (value != null && !(value is string))
+            else if ((value != null) && (value is not string))
             {
-                throw new TypeErrorException("string");
+                throw new TypeErrorException("value must be string");
             }
 
             string prefix = option.ContainsKey("prefix") ? option["prefix"].Value<string>() : "";
@@ -2125,15 +2120,29 @@ namespace unify_builder
                     break;
                 case "list":
                     {
-                        List<string> cmdList = new();
+                        List<string> cmdList = new(64);
+                        List<string> valList = new(64);
 
                         string cmd = option["command"].Value<string>();
 
                         if (value != null)
                         {
-                            foreach (var item in (IEnumerable<string>)value)
+                            if (value is string)
+                                valList.Add((string)value);
+                            else
+                                valList.AddRange((IEnumerable<string>)value);
+
+                            JObject valueMapper = null;
+                            if (option.ContainsKey("mapper"))
+                                valueMapper = (JObject)option["mapper"];
+
+                            foreach (var item in valList)
                             {
-                                cmdList.Add(cmd + item);
+                                var val = item;
+                                if (valueMapper != null)
+                                    foreach (var kv in valueMapper)
+                                        val = Regex.Replace(val, kv.Key, kv.Value.Value<string>());
+                                cmdList.Add(cmd + val);
                             }
 
                             command = string.Join(" ", cmdList.ToArray());
@@ -4042,6 +4051,10 @@ namespace unify_builder
 
         static void saveBuilderCommands(string dbpath, bool is_build_ok)
         {
+            var dir = Path.GetDirectoryName(dbpath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
             using (var connection = new SqliteConnection($"Data Source=\"{dbpath}\""))
             {
                 connection.Open();
