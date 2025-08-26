@@ -1429,6 +1429,7 @@ namespace unify_builder
         ///  - SDCC
         ///  - COSMIC_STM8
         ///  - IAR_STM8
+        ///  - GNU_SDCC_MCS51
         /// </returns>
         public string getCompilerId()
         {
@@ -2253,8 +2254,6 @@ namespace unify_builder
         public static readonly int CODE_ERR = 1;
         public static readonly int CODE_DONE = 0;
 
-        public static readonly string sdcc_asm_optimizer = "sdcc_asm_optimizer";
-
         // minimum amount of files to enable multi-thread compilation
         static readonly int minFilesNumsForMultiThread = 8;
 
@@ -2926,6 +2925,37 @@ namespace unify_builder
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
                                 lkOutputRender.Add(new Regex(@"\b(segment [\.\w\-]+ size overflow)",
                                     RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
+                            }
+                            break;
+                        case "gnu_sdcc_mcs51":
+                            {
+                                /* compiler */
+                                ccOutputRender.Add(new Regex(@"(warning \d+:|\swarning:\s|^warning:\s)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
+                                ccOutputRender.Add(new Regex(@"(error \d+:|\serror:\s|^error:\s)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
+
+                                /* linker */
+                                lkOutputRender.Add(new Regex(@"\b(warning:\s)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), WARN_RENDER);
+                                lkOutputRender.Add(new Regex(@"\b(error:\s)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), ERRO_RENDER);
+                                lkOutputRender.Add(new Regex(@"\b(note:\s)",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), NOTE_RENDER);
+                                lkOutputRender.Add(new Regex(@"\b(cannot open linker script file)\b",
+                                    RegexOptions.Compiled), ERRO_RENDER);
+                                lkOutputRender.Add(new Regex(@"\b(undefined reference to `[^']+')",
+                                    RegexOptions.Compiled), ERRO_RENDER);
+                                lkOutputRender.Add(new Regex(@"\b(multiple definition of `[^']+')",
+                                    RegexOptions.Compiled), ERRO_RENDER);
+                                lkOutputRender.Add(new Regex(@"\b(section `[^']+' will not fit in region `[^']+')",
+                                    RegexOptions.Compiled), ERRO_RENDER);
+                                lkOutputRender.Add(new Regex(@"\b(region `[^']+' overflowed by \w+ bytes)",
+                                    RegexOptions.Compiled), HINT_RENDER);
+                                lkOutputRender.Add(new Regex(@"\b(region \w+ overflowed with \w+)",
+                                    RegexOptions.Compiled), HINT_RENDER);
+                                lkOutputRender.Add(new Regex(@"(\[\-w[\w\-=]+\])",
+                                    RegexOptions.IgnoreCase | RegexOptions.Compiled), HINT_RENDER);
                             }
                             break;
                         /* other modern compilers */
@@ -5534,14 +5564,9 @@ namespace unify_builder
             switch (modeID)
             {
                 case "AC5":
-                    return ac5_parseRefLines(lines);
                 case "IAR_STM8":
                 case "IAR_ARM":
                     return ac5_parseRefLines(lines);
-                case "SDCC":
-                case "AC6":
-                case "GCC":
-                    return gnu_parseRefLines(lines);
                 default:
                     return gnu_parseRefLines(lines);
             }
