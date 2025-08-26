@@ -319,8 +319,7 @@ namespace unify_builder
 
             public string title;            // [optional] a title for this command
             public string shellCommand;     // [optional] shell command which will be invoke compiler, used to gen 'compile_commands.json'
-            public string[] outputs;        // [optional] if output more than one files, use this field
-            public string argsForSplitter;  // [optional] compiler args for 'source_splitter' tool
+            public string[] outputs = null; // [optional] if output more than one files, use this field
 
             public string sdcc_bundleLibArgs; // [specific] just for SDCC compiler
         };
@@ -382,8 +381,6 @@ namespace unify_builder
 
         private readonly string compilerAttr_commandPrefix;      // the compiler options prefix
         private readonly string compilerAttr_directorySeparator;   // the path-sep for compiler options
-
-        private readonly bool compilerAttr_sdcc_module_split = false; // one-module-per-function for sdcc
 
         private readonly JObject model;         // compiler model obj
         private readonly JObject parameters;    // builder.params obj
@@ -612,20 +609,7 @@ namespace unify_builder
             {
                 if (toolId == "SDCC")
                 {
-                    if (paramObj["global"].ContainsKey("$one-module-per-function"))
-                    {
-                        compilerAttr_sdcc_module_split = false; // @disabled paramObj["global"]["$one-module-per-function"].Value<bool>();
-                    }
-
-                    // check sdcc version, must > v4.x.x
-                    if (compilerAttr_sdcc_module_split && !string.IsNullOrEmpty(compilerVersion))
-                    {
-                        if (!Regex.IsMatch(compilerVersion, @"^([4-9]|[1-9]\d+)\."))
-                        {
-                            var msg = string.Format("In module split mode, sdcc version must >= 'v4.x.x', now is '{0}' !", compilerVersion);
-                            throw new Exception(msg);
-                        }
-                    }
+                    //TODO
                 }
             }
 
@@ -774,13 +758,6 @@ namespace unify_builder
 
                 baseOpts.Add(name, baseOptLi.ToArray());
                 userOpts.Add(name, userOptLi.ToArray());
-            }
-        }
-
-        public bool IsUseSdccModuleOptimizer
-        {
-            get {
-                return compilerAttr_sdcc_module_split;
             }
         }
 
@@ -1731,13 +1708,9 @@ namespace unify_builder
             string paramsSuffix = ".args.txt";
 
             bool isQuote = true; // quote path which have whitespace
-            bool isSplitterEn = compilerAttr_sdcc_module_split && modelName != "asm";
 
             if (cModel.ContainsKey("$outputSuffix")) outputSuffix = cModel["$outputSuffix"].Value<string>();
             if (cModel.ContainsKey("$quotePath")) isQuote = cModel["$quotePath"].Value<bool>();
-
-            // if use splitter, outpath is a preprocessed .c file
-            if (isSplitterEn) outputSuffix = ".mods";
 
             //--
 
@@ -1938,22 +1911,15 @@ namespace unify_builder
 
                 if (outputFormat.Contains("${in}"))
                 {
-                    if (!isSplitterEn)
-                    {
-                        outputFormat = outputFormat
-                            .Replace("${out}", toRelativePathForCompilerArgs(outPath, isQuote))
-                            .Replace("${in}", toRelativePathForCompilerArgs(fpath, isQuote));
-                    }
+                    outputFormat = outputFormat
+                        .Replace("${out}", toRelativePathForCompilerArgs(outPath, isQuote))
+                        .Replace("${in}", toRelativePathForCompilerArgs(fpath, isQuote));
                 }
                 else /* compate KEIL_C51 */
                 {
                     commands.Insert(0, toRelativePathForCompilerArgs(fpath));
-
-                    if (!isSplitterEn)
-                    {
-                        outputFormat = outputFormat
-                            .Replace("${out}", toRelativePathForCompilerArgs(outPath, isQuote));
-                    }
+                    outputFormat = outputFormat
+                        .Replace("${out}", toRelativePathForCompilerArgs(outPath, isQuote));
                 }
 
                 var outputCmd = outputFormat
@@ -1988,9 +1954,6 @@ namespace unify_builder
                 sourceArgsChanged = true,
                 baseArgs = sourceBaseArgs
             };
-
-            if (isSplitterEn)
-                buildArgs.argsForSplitter = compilerArgs;
 
             // create cli args for 'compile_commands.json'
             buildArgs.shellCommand =
@@ -3268,38 +3231,13 @@ namespace unify_builder
 
                 var PushLinkerObjs = delegate (CmdGenerator.CmdInfo ccArgs) {
 
-                    // it's a normal obj
-                    if (string.IsNullOrEmpty(ccArgs.argsForSplitter))
+                    linkerObjs.Add(ccArgs.sourcePath, new() { ccArgs.outPath });
+
+                    var order = orderNumberBase + objOrder.Count;
+
+                    if (objOrder.TryAdd(ccArgs.outPath, order) == false)
                     {
-                        linkerObjs.Add(ccArgs.sourcePath, new() { ccArgs.outPath });
-
-                        var order = orderNumberBase + objOrder.Count;
-
-                        if (objOrder.TryAdd(ccArgs.outPath, order) == false)
-                        {
-                            objOrder[ccArgs.outPath] = order;
-                        }
-                    }
-
-                    // it's a splitted obj, parse from file
-                    else if (File.Exists(ccArgs.outPath))
-                    {
-                        var objLi = parseSourceSplitterOutput(File.ReadLines(ccArgs.outPath))
-                            .Select(path => {
-                                return Utility.isAbsolutePath(path) ? path : (projectRoot + Path.DirectorySeparatorChar + path);
-                            }).ToList();
-
-                        linkerObjs.Add(ccArgs.sourcePath, objLi);
-
-                        foreach (var _objPath in objLi)
-                        {
-                            var order = orderNumberBase + objOrder.Count;
-
-                            if (objOrder.TryAdd(_objPath, order) == false)
-                            {
-                                objOrder[_objPath] = order;
-                            }
-                        }
+                        objOrder[ccArgs.outPath] = order;
                     }
                 };
 
@@ -3555,32 +3493,9 @@ namespace unify_builder
                         int exitCode;
                         string ccLog;
 
-                        if (string.IsNullOrEmpty(cmdInfo.argsForSplitter)) // normal compile
-                        {
-                            exitCode = runExe(cmdInfo.exePath, cmdInfo.commandLine,
+                        exitCode = runExe(cmdInfo.exePath, cmdInfo.commandLine,
                                 out string ccOut, cmdInfo.outputEncoding, cliArgs.DryRun);
-                            ccLog = ccOut.Trim();
-                        }
-                        else // use source splitter
-                        {
-                            string[] argsLi = {
-                                "--cwd", projectRoot,
-                                "--outdir", Utility.toRelativePath(projectRoot, outDir) ?? outDir,
-                                "--compiler-args", "\\\"" + cmdInfo.argsForSplitter + "\\\"",
-                                "--compiler-dir", curEnvs["TOOL_DIR"] + Path.DirectorySeparatorChar + "bin",
-                                Utility.toRelativePath(projectRoot, cmdInfo.sourcePath) ?? outDir
-                            };
-
-                            string exeArgs = string.Join(" ",
-                                argsLi.Select(str => str.Contains(' ') ? ("\"" + str + "\"") : str).ToArray());
-
-                            exitCode = runExe(sdcc_asm_optimizer, exeArgs, out string __,
-                                out string resOut, out string ccOut, cmdInfo.outputEncoding, cliArgs.DryRun);
-                            ccLog = ccOut.Trim();
-
-                            // parse and set obj list
-                            cmdInfo.outputs = parseSourceSplitterOutput(resOut);
-                        }
+                        ccLog = ccOut.Trim();
 
                         // ignore normal output
                         if (enableNormalOut || exitCode != CODE_DONE)
@@ -3610,8 +3525,6 @@ namespace unify_builder
                 else
                 {
                     int threads = calcuThreads(reqThreadsNum, commands.Count);
-                    // reduce thread number, because module optimizer is also a multi-thread program.
-                    if (cmdGen.IsUseSdccModuleOptimizer && threads >= 6) threads -= 2;
                     compileByMulThread(threads, commands.Values.ToArray(), errLogs);
                 }
 
@@ -5012,37 +4925,6 @@ namespace unify_builder
             return runExe(filename, args, out _output, encoding, dryRun);
         }
 
-        static string[] parseSourceSplitterOutput(string log)
-        {
-            return parseSourceSplitterOutput(CRLFMatcher.Split(log));
-        }
-
-        static string[] parseSourceSplitterOutput(IEnumerable<string> lines)
-        {
-            List<string> res = new(64);
-
-            bool headerMatched = false;
-
-            foreach (var line_ in lines)
-            {
-                var line = line_.Trim();
-
-                if (headerMatched)
-                {
-                    if (line.StartsWith("<---"))
-                        break; // go end, exit
-                    else if (!string.IsNullOrWhiteSpace(line))
-                        res.Add(line);
-                }
-                else
-                {
-                    headerMatched = line.StartsWith("--->");
-                }
-            }
-
-            return res.ToArray();
-        }
-
         static string getCompileLogTag(string sourceType)
         {
             return sourceType switch {
@@ -5124,36 +5006,10 @@ namespace unify_builder
                     string cclog;
 
                     // do compile
-
-                    if (string.IsNullOrEmpty(ccArgs.argsForSplitter))
-                    {
-                        exitCode = runExe(
+                    exitCode = runExe(
                             ccArgs.exePath, ccArgs.commandLine,
                             out string output, ccArgs.outputEncoding, cliArgs.DryRun);
-
-                        cclog = output.Trim();
-                    }
-                    else
-                    {
-                        string[] argsLi = {
-                            "--cwd", projectRoot,
-                            "--outdir", Utility.toRelativePath(projectRoot, outDir) ?? outDir,
-                            "--compiler-args", "\\\"" + ccArgs.argsForSplitter + "\\\"",
-                            "--compiler-dir", curEnvs["TOOL_DIR"] + Path.DirectorySeparatorChar + "bin",
-                            Utility.toRelativePath(projectRoot, ccArgs.sourcePath) ?? outDir
-                        };
-
-                        string exeArgs = string.Join(" ",
-                            argsLi.Select(str => str.Contains(' ') ? ("\"" + str + "\"") : str).ToArray());
-
-                        exitCode = runExe(sdcc_asm_optimizer, exeArgs, out string __,
-                            out string resultOut, out string ccOut, ccArgs.outputEncoding, cliArgs.DryRun);
-
-                        cclog = ccOut.Trim();
-
-                        // parse and set obj list
-                        ccArgs.outputs = parseSourceSplitterOutput(resultOut);
-                    }
+                    cclog = output.Trim();
 
                     // need ignore normal output ?
                     bool isLogEn = enableNormalOut || exitCode != CODE_DONE;

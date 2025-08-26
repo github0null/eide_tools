@@ -1,9 +1,0 @@
-
-.antlr
-.vscode
-
-*.interp
-*.tokens
-
-*.java
-*.class

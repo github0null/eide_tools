@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "sdcc_asm_optimizer": {
-      "commandName": "Project",
-      "commandLineArgs": "-w \"C:\\Users\\Administrator\\Desktop\\Si4438-master\\Send_4438 v1.1\"\r\n-o \"build/test\"\r\n--compiler-args \"\\\"--std-c99 -c -I. -ISTM8L15x_StdPeriph_Driver/inc -mstm8 --opt-code-speed -MMD -o ${out} ${in}\\\"\"\r\n--compiler-dir \"C:\\Users\\Administrator\\.eide\\tools\\sdcc\\bin\"\r\n\"443x/radio.c\""
-    }
-  }
-}
