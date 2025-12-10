@@ -245,12 +245,9 @@ namespace axf2elf
 
         static string randomStr(int length = 8)
         {
-            var crypto = RandomNumberGenerator.Create();
-            var bits = length * 6;
-            var byte_size = (bits + 7) / 8;
-            var bytesarray = new byte[byte_size];
-            crypto.GetBytes(bytesarray);
-            return Convert.ToBase64String(bytesarray);
+            const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            return new string(Enumerable.Repeat(chars, length)
+                .Select(s => s[Random.Shared.Next(s.Length)]).ToArray());
         }
 
         static int runExe(string exePath, string args, out string _output)
