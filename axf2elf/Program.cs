@@ -74,15 +74,25 @@ namespace axf2elf
 
             int eCode;
             string exe_output;
+            bool is_multiple_rom;
 
             // make bin
             string bin_file_name = Path.GetFileNameWithoutExtension(axf_file_path) + "_" + randomStr() + ".bin";
-            string bin_file_path = Path.GetTempPath() + Path.DirectorySeparatorChar + bin_file_name;
-            eCode = runExe(fromelf_path, $"--bincombined --output \"{bin_file_path}\" \"{axf_file_path}\"", out exe_output);
+            string bin_file_path = Path.GetTempPath() + bin_file_name;
+            eCode = runExe(fromelf_path, $"--bin --output \"{bin_file_path}\" \"{axf_file_path}\"", out exe_output);
             if (eCode != CODE_DONE)
             {
                 log(exe_output);
                 return CODE_ERR;
+            }
+
+            if (Directory.Exists(bin_file_path))
+            {
+                is_multiple_rom = true;
+            }
+            else
+            {
+                is_multiple_rom = false;
             }
 
             // get axf information
@@ -177,39 +187,28 @@ namespace axf2elf
 
             // === generate command line ===
 
-            section_info entry_section = null;
-            List<string> rm_sec_list = new List<string>();
+            List<string> rom_section_list = new List<string>();
 
             foreach (section_info sec_info in section_list)
             {
-                if (sec_info.address == entry_header_addr)
+                if (!Array.Exists(sec_info.flags, delegate (string flag) { return flag == "SHF_WRITE"; }))
                 {
-                    if (entry_section != null)
-                    {
-                        error("error !, duplicated entry section: " + entry_section.name + " and " + sec_info.name);
-                        return CODE_ERR;
-                    }
-
-                    entry_section = sec_info;
-                }
-
-                else if (!Array.Exists(sec_info.flags, delegate (string flag) { return flag == "SHF_WRITE"; }))
-                {
-                    rm_sec_list.Add(sec_info.name);
+                    rom_section_list.Add(sec_info.name);
                 }
             }
 
-            if (entry_section == null)
+            if (rom_section_list.Count <= 0)
             {
-                error("not found entry section !");
+                error("not found ROM section !");
                 return CODE_ERR;
             }
 
-            string command_params = "--update-section " + entry_section.name + "=\"" + bin_file_path + "\"";
-
-            foreach (string sec_name in rm_sec_list)
+            string command_params = "";
+            string rom_path;
+            foreach (string sec_name in rom_section_list)
             {
-                command_params += " --remove-section " + sec_name;
+                rom_path = is_multiple_rom ? (bin_file_path + Path.DirectorySeparatorChar + sec_name) : bin_file_path;
+                command_params += "--update-section " + sec_name + "=\"" + rom_path + "\" ";
             }
 
             string command_line = command_params
@@ -227,11 +226,18 @@ namespace axf2elf
             // === clean ===
             try
             {
-                File.Delete(bin_file_path);
+                if (is_multiple_rom)
+                {
+                    Directory.Delete(bin_file_path, true);
+                }
+                else
+                {
+                    File.Delete(bin_file_path);
+                }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                log($"fail to delete temp file: {bin_file_path}");
+                log($"fail to delete temp file or folder: {bin_file_path}, Error message: {ex.Message}");
             }
 
             return eCode;
@@ -239,12 +245,9 @@ namespace axf2elf
 
         static string randomStr(int length = 8)
         {
-            var crypto = RandomNumberGenerator.Create();
-            var bits = length * 6;
-            var byte_size = (bits + 7) / 8;
-            var bytesarray = new byte[byte_size];
-            crypto.GetBytes(bytesarray);
-            return Convert.ToBase64String(bytesarray);
+            const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            return new string(Enumerable.Repeat(chars, length)
+                .Select(s => s[Random.Shared.Next(s.Length)]).ToArray());
         }
 
         static int runExe(string exePath, string args, out string _output)
