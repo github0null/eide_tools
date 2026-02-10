@@ -2316,6 +2316,7 @@ namespace unify_builder
         static string paramsFilePath;
         static string refJsonName;
 
+        static FileStream lockFile = null;
         static FileStream logStream = null;
         static FileStream compilerLogStream = null;
 
@@ -2735,8 +2736,8 @@ namespace unify_builder
                 info($"start building at {time:yyyy-MM-dd HH:mm:ss}{(cliArgs.DryRun ? "(dry-run)" : "")}\r\n");
             }
 
-            // open and lock log file
-            lockLogs();
+            // lock build to prevent multiple builds running together
+            lockBuild();
 
             // boost process priority
             try
@@ -3122,8 +3123,7 @@ namespace unify_builder
                         log("");
                     }
 
-                    // close and unlock log file
-                    unlockLogs();
+                    unlockBuild();
 
                     return CODE_DONE;
                 }
@@ -3325,7 +3325,7 @@ namespace unify_builder
                     {
                         log("Source Map Database Path: " + refFilePath);
                         log("Compiler Database Path: " + compilerDbPath);
-                        unlockLogs();
+                        unlockBuild();
                         return CODE_DONE;
                     }
                 }
@@ -3335,7 +3335,7 @@ namespace unify_builder
                     {
                         error("Failed:");
                         error(err.ToString() + "\n");
-                        unlockLogs();
+                        unlockBuild();
                         return CODE_ERR;
                     }
                 }
@@ -3931,8 +3931,7 @@ namespace unify_builder
                 appendErrLogs(err, errLogs.ToArray());
                 dumpCompilerLog();
 
-                // close and unlock log file
-                unlockLogs();
+                unlockBuild();
 
                 return CODE_ERR;
             }
@@ -3961,8 +3960,7 @@ namespace unify_builder
                     makefileOutput.ToString());
             }
 
-            // close and unlock log file
-            unlockLogs();
+            unlockBuild();
 
             return CODE_DONE;
         }
@@ -5725,43 +5723,44 @@ namespace unify_builder
             return quotePath(res);
         }
 
-        //////////////////////////////////////////////////
-        ///             logger function
-        //////////////////////////////////////////////////
-
-        static void lockLogs()
+        static void lockBuild()
         {
+            string builder_logpath;
+            string compiler_logpath;
+
             if (cliArgs.OnlyDumpCompilerDB || cliArgs.OnlyPrintArgs)
             {
-                if (logStream == null)
-                {
-                    string logPath = Path.GetTempPath() + "unify_builder.log";
-                    logStream = new FileStream(logPath, FileMode.Append, FileAccess.Write);
-                }
-
-                if (compilerLogStream == null)
-                {
-                    string logPath = Path.GetTempPath() + "compiler.log";
-                    compilerLogStream = new FileStream(logPath, FileMode.Create, FileAccess.Write);
-                }
+                builder_logpath = Path.GetTempPath() + "unify_builder.log";
+                compiler_logpath = Path.GetTempPath() + "compiler.log";
             }
             else
             {
-                if (logStream == null)
-                {
-                    string logPath = dumpPath + Path.DirectorySeparatorChar + "unify_builder.log";
-                    logStream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.None);
-                }
+                builder_logpath = dumpPath + Path.DirectorySeparatorChar + "unify_builder.log";
+                compiler_logpath = dumpPath + Path.DirectorySeparatorChar + "compiler.log";
+            }
 
-                if (compilerLogStream == null)
-                {
-                    string logPath = dumpPath + Path.DirectorySeparatorChar + "compiler.log";
-                    compilerLogStream = new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                }
+            if (lockFile == null)
+            {
+                string lockFilePath = dumpPath + Path.DirectorySeparatorChar + ".lock";
+                lockFile = new FileStream(lockFilePath, FileMode.Append, FileAccess.Write, FileShare.None);
+            }
+
+            if (logStream == null)
+            {
+                FileMode mode = FileMode.Append;
+                var fileinfo = new FileInfo(builder_logpath);
+                if (fileinfo.Exists && fileinfo.Length > 100 * 1024) // 文件过长后截断
+                    mode = FileMode.Truncate;
+                logStream = new FileStream(builder_logpath, mode, FileAccess.Write);
+            }
+
+            if (compilerLogStream == null)
+            {
+                compilerLogStream = new FileStream(compiler_logpath, FileMode.Create, FileAccess.Write);
             }
         }
 
-        static void unlockLogs()
+        static void unlockBuild()
         {
             try
             {
@@ -5769,15 +5768,29 @@ namespace unify_builder
                 compilerLogStream.Flush();
                 compilerLogStream.Close();
 
-                // unify_builder.log must be at last to flush
+                // unify_builder.log
                 logStream.Flush();
                 logStream.Close();
+
+                // unlock
+                if (lockFile != null)
+                {
+                    lockFile.Flush();
+                    lockFile.Close();
+                    // 执行冗余的写入，避免其他平台的 lockFile.Close() 没有触发 nodejs filewatcher
+                    // 不必担心多次触发, 发出构建命令后，我们会在触发第一次时关闭filewatcher
+                    File.WriteAllText(lockFile.Name, "");
+                }
             }
             catch (Exception)
             {
                 // nothing todo
             }
         }
+
+        //////////////////////////////////////////////////
+        ///             logger function
+        //////////////////////////////////////////////////
 
         static void dumpCompilerLog()
         {
