@@ -4934,6 +4934,40 @@ namespace unify_builder
             return exitCode;
         }
 
+        public static int runExe(
+            string filename, string args,
+            Encoding encoding = null, bool dryRun = false)
+        {
+            if (dryRun)
+            {
+                return 0;
+            }
+
+            // if executable is 'cmd.exe', force use ascii
+            if (filename == "cmd" ||
+                filename == "cmd.exe")
+            {
+                encoding = RuntimeEncoding.instance().Default;
+            }
+
+            Process process = new();
+            process.StartInfo.FileName = replaceEnvVariable(filename);
+            process.StartInfo.Arguments = replaceEnvVariable(args); // 注意：分配给 Arguments 属性的字符串的长度必须小于 32,699。
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.RedirectStandardOutput = false;
+            process.StartInfo.RedirectStandardError = false;
+            process.StartInfo.CreateNoWindow = true;
+            process.StartInfo.StandardOutputEncoding = encoding ?? RuntimeEncoding.instance().Default;
+            process.StartInfo.StandardErrorEncoding = encoding ?? RuntimeEncoding.instance().Default;
+            process.Start();
+
+            process.WaitForExit();
+            int exitCode = process.ExitCode;
+            process.Close();
+
+            return exitCode;
+        }
+
         public static int runShellCommand(string command, out string _output, Encoding encoding = null, bool dryRun = false)
         {
             string filename;
@@ -4951,6 +4985,25 @@ namespace unify_builder
             }
 
             return runExe(filename, args, out _output, encoding, dryRun);
+        }
+
+        public static int runShellCommand(string command, Encoding encoding = null, bool dryRun = false)
+        {
+            string filename;
+            string args;
+
+            if (OsInfo.instance().OsType == "win32")
+            {
+                filename = "cmd";
+                args = "/C \"" + command + "\"";
+            }
+            else
+            {
+                filename = "/bin/bash";
+                args = "-c \"" + command + "\"";
+            }
+
+            return runExe(filename, args, encoding, dryRun);
         }
 
         static string getCompileLogTag(string sourceType)
