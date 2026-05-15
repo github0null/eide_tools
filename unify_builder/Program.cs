@@ -3134,13 +3134,13 @@ namespace unify_builder
                     throw new Exception("Not found toolchain directory !, [path] : \"" + toolchainRoot + "\"");
                 }
 
-                // 生成 makefile 要放在 rebuild task 之前
+                // 生成 makefile 要放在 prebuild task 之前
                 if (cliArgs.OutputMakefile)
                 {
                     var builderVersion = Assembly.GetExecutingAssembly().GetName().Version;
                     makefileOutput
                         .AppendLine("#################################################################")
-                        .AppendLine($"# AUTO GENERATE AT {DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")} BY unify_builder v{builderVersion}")
+                        .AppendLine($"# AUTO GENERATE BY unify_builder v{builderVersion}")
                         .AppendLine("#################################################################")
                         .AppendLine();
 
