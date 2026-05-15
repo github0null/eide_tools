@@ -2337,6 +2337,13 @@ namespace unify_builder
         // 用于存储上次构建后旧的编译命令，以便增量编译时判断是否需要重新编译
         public static ConcurrentDictionary<string, string> table_compilerCmds = new(Environment.ProcessorCount * 2, 4096);
 
+        // 日志
+        static List<string> buildInfoLogs = new(256);
+        static List<string> compilerLogs_cpp = new(256);
+        static List<string> compilerLogs_lnk = new(256);
+        static string prebuildLogs = "";
+        static string postbuildLogs = "";
+
         enum BuilderMode
         {
             NORMAL = 0,
@@ -3091,6 +3098,9 @@ namespace unify_builder
                 addCliVar("re:ToolchainRoot", Utility.toRelativePath(projectRoot, toolchainRoot) ?? toolchainRoot);
                 addCliVar("re:CompilerFolder", Utility.toRelativePath(projectRoot, CC_DIR) ?? CC_DIR);
 
+                buildInfoLogs.Add($"Compiler Full Name: {cmdGen.compilerFullName}");
+                buildInfoLogs.Add($"Compiler Version: {cmdGen.compilerVersion}");
+
                 if (cliArgs.OnlyPrintArgs)
                 {
                     CmdGenerator.CmdInfo cmdInf;
@@ -3243,7 +3253,7 @@ namespace unify_builder
                 if (!cliArgs.OnlyDumpCompilerDB)
                 {
                     switchWorkDir(projectRoot);
-                    var ret = runTasks("PRE-BUILD TASKS", "beforeBuildTasks");
+                    var ret = runTasks("PRE-BUILD TASKS", "beforeBuildTasks", out prebuildLogs);
                     resetWorkDir();
                     if (ret != CODE_DONE)
                         throw new Exception("Run Tasks Failed !, Stop Build !");
@@ -3469,6 +3479,7 @@ namespace unify_builder
                         src_count_asm = res.asmCount;
                         commands      = res.totalCmds;
                         infoWithLable("file statistics (incremental mode)\r\n");
+                        buildInfoLogs.Add("Builder Mode: Incremental");
                     }
                 }
 
@@ -3477,6 +3488,7 @@ namespace unify_builder
                 {
                     isRebuild = true;
                     infoWithLable("file statistics (rebuild mode)\r\n");
+                    buildInfoLogs.Add("Builder Mode: Rebuild");
                 }
 
                 // 如果是 rebuild 模式则清空旧的 commands
@@ -3494,6 +3506,10 @@ namespace unify_builder
                     .ToString();
 
                 Console.Write(tString);
+
+                buildInfoLogs.Add($"The amount of C files: {src_count_c}");
+                buildInfoLogs.Add($"The amount of C++ files: {src_count_cpp}");
+                buildInfoLogs.Add($"The amount of Asm files: {src_count_asm}");
 
                 // build start
                 switchWorkDir(projectRoot);
@@ -3945,7 +3961,7 @@ namespace unify_builder
             try
             {
                 switchWorkDir(projectRoot);
-                runTasks("POST-BUILD TASKS", "afterBuildTasks");
+                runTasks("POST-BUILD TASKS", "afterBuildTasks", out postbuildLogs);
                 resetWorkDir();
             }
             catch (Exception err)
@@ -4599,12 +4615,12 @@ namespace unify_builder
             Console.Write(s);
         }
 
-        static List<string> compiler_log_cpp = new(256);
-        static List<string> compiler_log_lnk = new(256);
         static void storeCompileOutput(string output, bool isLinker = false)
         {
-            if (isLinker) compiler_log_lnk.Add(output);
-            else compiler_log_cpp.Add(output);
+            if (isLinker)
+                compilerLogs_lnk.Add(output);
+            else
+                compilerLogs_cpp.Add(output);
         }
 
         static void printProgress(string label, float progress, string suffix = "")
@@ -5159,8 +5175,10 @@ namespace unify_builder
             return new string(buf);
         }
 
-        static int runTasks(string label, string fieldName)
+        static int runTasks(string label, string fieldName, out string logs)
         {
+            logs = "";
+
             var vars = new Dictionary<string, string>(64);
             {
                 foreach (var kv in curEnvs) vars.TryAdd(kv.Key, kv.Value);
@@ -5315,18 +5333,18 @@ namespace unify_builder
                         }
 
                         // run command
-                        if (runShellCommand(command, out string cmdStdout, null, cliArgs.DryRun) == CODE_DONE)
+                        if (runShellCommand(command, out logs, null, cliArgs.DryRun) == CODE_DONE)
                         {
                             success("[done]");
-                            if (!string.IsNullOrEmpty(cmdStdout.Trim()))
-                                log("\r\n" + cmdStdout, false);
+                            if (!string.IsNullOrEmpty(logs.Trim()))
+                                log("\r\n" + logs, false);
                         }
                         else
                         {
                             error("[failed]");
                             log("\r\n" + command);
-                            if (!string.IsNullOrEmpty(cmdStdout.Trim()))
-                                error("\r\n" + cmdStdout, false);
+                            if (!string.IsNullOrEmpty(logs.Trim()))
+                                error("\r\n" + logs, false);
 
                             if (cmd.ContainsKey("stopBuildAfterFailed")
                                 && cmd["stopBuildAfterFailed"].Type == JTokenType.Boolean
@@ -5349,7 +5367,8 @@ namespace unify_builder
                 }
                 catch (Exception e)
                 {
-                    error("failed on '" + label + "', msg: " + e.Message);
+                    logs = "failed on '" + label + "', msg: " + e.Message;
+                    error(logs);
                 }
             }
 
@@ -5851,21 +5870,45 @@ namespace unify_builder
             {
                 if (compilerLogStream != null)
                 {
-                    // cc log
+                    var encoding = RuntimeEncoding.instance().Default;
+
+                    // info
                     {
-                        var txt = ">>> cc" + OsInfo.instance().CRLF + OsInfo.instance().CRLF;
-                        txt += string.Join(OsInfo.instance().CRLF, compiler_log_cpp);
-                        compilerLogStream.Write(RuntimeEncoding.instance().Default.GetBytes(txt));
+                        var txt = ">>> info" + OsInfo.instance().CRLF + OsInfo.instance().CRLF;
+                        txt += string.Join(OsInfo.instance().CRLF, buildInfoLogs);
+                        compilerLogStream.Write(encoding.GetBytes(txt));
+                        compilerLogStream.Write(encoding.GetBytes(OsInfo.instance().CRLF + OsInfo.instance().CRLF));
                     }
 
-                    compilerLogStream.Write(RuntimeEncoding.instance().Default.GetBytes(
-                        OsInfo.instance().CRLF + OsInfo.instance().CRLF));
+                    // prebuild
+                    {
+                        var txt = ">>> prebuild" + OsInfo.instance().CRLF + OsInfo.instance().CRLF;
+                        txt += prebuildLogs;
+                        compilerLogStream.Write(encoding.GetBytes(txt));
+                        compilerLogStream.Write(encoding.GetBytes(OsInfo.instance().CRLF + OsInfo.instance().CRLF));
+                    }
 
-                    // link log
+                    // cc
+                    {
+                        var txt = ">>> cc" + OsInfo.instance().CRLF + OsInfo.instance().CRLF;
+                        txt += string.Join(OsInfo.instance().CRLF, compilerLogs_cpp);
+                        compilerLogStream.Write(encoding.GetBytes(txt));
+                        compilerLogStream.Write(encoding.GetBytes(OsInfo.instance().CRLF + OsInfo.instance().CRLF));
+                    }
+
+                    // link
                     {
                         var txt = ">>> ld" + OsInfo.instance().CRLF + OsInfo.instance().CRLF;
-                        txt += string.Join(OsInfo.instance().CRLF, compiler_log_lnk);
-                        compilerLogStream.Write(RuntimeEncoding.instance().Default.GetBytes(txt));
+                        txt += string.Join(OsInfo.instance().CRLF, compilerLogs_lnk);
+                        compilerLogStream.Write(encoding.GetBytes(txt));
+                        compilerLogStream.Write(encoding.GetBytes(OsInfo.instance().CRLF + OsInfo.instance().CRLF));
+                    }
+
+                    // postbuild
+                    {
+                        var txt = ">>> postbuild" + OsInfo.instance().CRLF + OsInfo.instance().CRLF;
+                        txt += postbuildLogs;
+                        compilerLogStream.Write(encoding.GetBytes(txt));
                     }
                 }
             }
