@@ -4058,6 +4058,20 @@ namespace unify_builder
                     transaction.Commit();
                 }
             }
+
+            // 同步写入 .json 数据库
+            string jsondbPath = dbpath + ".json";
+            List<CompileCommandsDataBaseItem> jsondb = new List<CompileCommandsDataBaseItem>(1024);
+            foreach (var e in table_compilerCmds)
+            {
+                CompileCommandsDataBaseItem item = new CompileCommandsDataBaseItem {
+                    file = e.Key,
+                    command = e.Value,
+                    directory = projectRoot,
+                };
+                jsondb.Add(item);
+            }
+            File.WriteAllText(jsondbPath, JsonConvert.SerializeObject(jsondb), RuntimeEncoding.instance().UTF8);
         }
 
         static int RunCommandsJson()
